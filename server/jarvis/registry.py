@@ -77,6 +77,14 @@ class ToolRegistry:
         spec = registered.spec
         audit = dict(tool=name, session_id=ctx.session_id, task_id=ctx.task_id)
 
+        if spec.approval and not approved and spec.precheck is not None:
+            refusal = await spec.precheck(ctx, args)
+            if refusal is not None:
+                await ctx.store.audit(
+                    "action_refused", detail={"args": args, "refusal": refusal}, **audit
+                )
+                return refusal
+
         if spec.approval and not approved:
             summary = _summarize(spec, args)
             action = await ctx.store.create_action(
@@ -159,7 +167,12 @@ class ToolRegistry:
 
 
 def _summarize(spec: ToolSpec, args: dict[str, Any]) -> str:
-    if spec.summary:
+    if callable(spec.summary):
+        try:
+            return spec.summary(args)
+        except Exception:
+            logger.exception(f"summary for {spec.name} failed")
+    elif spec.summary:
         try:
             return spec.summary.format(**args)
         except (KeyError, IndexError, ValueError):

@@ -87,6 +87,11 @@ class Store(Protocol):
     ) -> Row: ...
     async def recent_session_summaries(self, limit: int = 3) -> list[Row]: ...
 
+    # laptop agent (supabase/migrations/0003_laptop.sql)
+    async def create_laptop_command(self, command: Row) -> Row: ...
+    async def get_laptop_command(self, command_id: str) -> Row | None: ...
+    async def laptop_heartbeat(self) -> Row | None: ...
+
 
 class SupabaseStore:
     """The core tables in Supabase, through the service_role key."""
@@ -370,6 +375,29 @@ class SupabaseStore:
         )
         return res.data
 
+    # laptop agent: the server only inserts signed commands and reads them back.
+    # The agent itself claims and finishes them through RPCs (anon key + token).
+
+    async def create_laptop_command(self, command: Row) -> Row:
+        res = await self._db.table("laptop_commands").insert(command).execute()
+        return res.data[0]
+
+    async def get_laptop_command(self, command_id: str) -> Row | None:
+        if not _is_uuid(command_id):
+            return None
+        res = (
+            await self._db.table("laptop_commands")
+            .select("*")
+            .eq("id", command_id)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    async def laptop_heartbeat(self) -> Row | None:
+        res = await self._db.table("laptop_heartbeat").select("*").eq("id", 1).limit(1).execute()
+        return res.data[0] if res.data else None
+
 
 def _escape_like(text: str) -> str:
     """Make user text match literally in a LIKE/ILIKE pattern."""
@@ -391,6 +419,8 @@ class MemoryStore:
         self.notes: list[Row] = []
         self.reminders: list[Row] = []
         self.summaries: list[Row] = []
+        self.laptop_commands: dict[str, Row] = {}
+        self.laptop_heartbeat_row: Row | None = None
         self._seq = itertools.count()
 
     def _stamp(self) -> str:
@@ -615,3 +645,24 @@ class MemoryStore:
     async def recent_session_summaries(self, limit: int = 3) -> list[Row]:
         rows = sorted(self.summaries, key=lambda r: r["ended_at"], reverse=True)
         return [dict(r) for r in rows[:limit]]
+
+    # laptop agent
+
+    async def create_laptop_command(self, command: Row) -> Row:
+        row = {
+            "result": None,
+            "error": None,
+            "created_at": self._stamp(),
+            "claimed_at": None,
+            "finished_at": None,
+            **command,
+        }
+        self.laptop_commands[row["id"]] = row
+        return dict(row)
+
+    async def get_laptop_command(self, command_id: str) -> Row | None:
+        row = self.laptop_commands.get(command_id)
+        return dict(row) if row else None
+
+    async def laptop_heartbeat(self) -> Row | None:
+        return dict(self.laptop_heartbeat_row) if self.laptop_heartbeat_row else None

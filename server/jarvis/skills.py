@@ -20,7 +20,11 @@ Where a tool is offered:
 - ``worker=True``: to the background worker's text model.
 - ``approval=True``: the call does not run; it becomes a pending action the
   user must confirm. ``summary`` is a ``str.format`` template over the
-  arguments, read to the user when asking.
+  arguments, or a function of the arguments, read to the user when asking.
+  ``precheck`` (optional, async ``(ctx, args) -> dict | None``) runs before
+  the action is parked: a dict it returns is the answer instead (e.g. "not
+  allowed" or "offline"), so the user is never asked to approve something
+  that cannot run.
 - ``blocking=False``: on voice, the call runs in the background (Gemini Live's
   NON_BLOCKING tools), so the conversation goes on and the result is spoken
   when it arrives. For tools that take a few seconds.
@@ -41,6 +45,8 @@ SKILLS_PACKAGE = "skills"
 TOOL_ATTR = "__jarvis_tool__"
 
 ToolFn = Callable[..., Awaitable[Any]]
+SummaryFn = Callable[[dict[str, Any]], str]
+PrecheckFn = Callable[["ToolContext", dict[str, Any]], Awaitable[dict[str, Any] | None]]
 
 
 @dataclass
@@ -64,8 +70,9 @@ class ToolSpec:
     voice: bool
     worker: bool
     approval: bool
-    summary: str | None
+    summary: str | SummaryFn | None
     blocking: bool = True
+    precheck: PrecheckFn | None = None
 
 
 def tool(
@@ -73,8 +80,9 @@ def tool(
     voice: bool = False,
     worker: bool = False,
     approval: bool = False,
-    summary: str | None = None,
+    summary: str | SummaryFn | None = None,
     blocking: bool = True,
+    precheck: PrecheckFn | None = None,
 ) -> Callable[[ToolFn], ToolFn]:
     """Mark an async function as a JARVIS tool. See the module docstring."""
     if not (voice or worker):
@@ -92,6 +100,7 @@ def tool(
                 approval=approval,
                 summary=summary,
                 blocking=blocking,
+                precheck=precheck,
             ),
         )
         return fn

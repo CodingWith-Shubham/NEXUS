@@ -9,12 +9,13 @@ timezone = "Asia/Kolkata"
 # its tools and prompt section; the core never imports a pack directly.
 # "demo" (Phase 1 test tools) is left out to keep the voice tool list under 10;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant"]
+# "laptop": ~/Downloads on the user's Mac, through laptop_agent/ (see README).
+enabled = ["assistant", "laptop"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
-# 10 core + assistant tools, plus web_search while web_search = "tool".
-max_tools = 11
+# 10 core + assistant tools, web_search while web_search = "tool", and 4 laptop tools.
+max_tools = 15
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live

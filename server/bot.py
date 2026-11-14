@@ -194,4 +194,7 @@ async def bot(runner_args: RunnerArguments):
 if __name__ == "__main__":
     from pipecat.runner.run import main
 
+    from jarvis.ui import install_voice_only_ui
+
+    install_voice_only_ui()
     main()

@@ -1,0 +1,28 @@
+# JARVIS laptop agent configuration. Copy to config.toml (git-ignored) and edit.
+# This file is the source of truth: nothing the server sends can widen it.
+
+[agent]
+enabled = true
+read_only = true          # default: Tier 2 (move/delete) rejected by the agent
+dry_run = false           # true: move/delete only report what they WOULD do
+poll_interval_seconds = 2
+heartbeat_seconds = 15
+command_timeout_seconds = 20
+max_commands_per_minute = 20
+command_ttl_seconds = 120
+
+[paths]
+allowed_roots = ["~/Downloads"]   # can only be narrowed (folders inside ~/Downloads)
+trash_dir = "~/Downloads/.jarvis_trash"
+max_read_bytes = 200000
+max_read_chars = 20000
+max_search_results = 25
+
+[deny]
+# Always denied, whatever this list says; entries here are added to the built-in list.
+patterns = ["*.pem","*.key","*.env","*secret*","*token*","*password*","*passwd*",
+            "*.kdbx","id_rsa*","*seed*","*wallet*","*.p12","*.pfx",
+            "*.mobileconfig","*.keychain*"]
+
+[tools]
+enabled = ["list_dir","search_files","read_file","move_file","delete_file"]

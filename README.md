@@ -9,6 +9,22 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
 - **Pipeline**: Realtime
   - **Speech-to-speech**: Google Gemini Live (hears, thinks and speaks)
 
+## How JARVIS is put together
+
+- **Voice front** (`server/bot.py`): Gemini Live with a few fast tools plus `delegate_task`.
+- **Background worker** (`server/worker.py`): a Gemini text model in its own process. It takes
+  tasks from the Supabase `tasks` table, writes results back, and the voice front announces them,
+  either during the call or at the start of the next one.
+- **Core** (`server/jarvis/`): storage, tool registry, skill loader, approval gate
+  (`confirm_action` / `cancel_action`), `delegate_task` and `get_task_status`.
+- **Skill packs** (`server/skills/<name>/`): each has its own tools, prompt sections and tests.
+  They are listed in `server/jarvis.toml`; remove a name to unload that pack.
+- **Database**: `supabase/migrations/0001_core.sql` creates the tables `memory`, `tasks`,
+  `pending_actions`, `audit_log` and `oauth_tokens`. Run it once in the Supabase SQL editor.
+
+Run JARVIS in two terminals from `server/`: `uv run bot.py` and `uv run worker.py`.
+Unit tests: `uv run pytest`. Spoken Phase 1 check: `uv run pipecat eval run evals/phase1_audio.yaml -v`.
+
 ## Setup
 
 ### Server
@@ -61,13 +77,19 @@ uv run pipecat eval run evals/starter_audio.yaml -v   # full audio round trip (s
 ```
 JARVIS/
 ├── server/              # Python bot server
-│   ├── bot.py           # Main bot implementation
+│   ├── bot.py           # Voice front (Gemini Live)
+│   ├── worker.py        # Background task worker
+│   ├── jarvis.toml      # Enabled skill packs, worker model, limits
+│   ├── jarvis/          # Core: store, registry, approval gate, tasks, announcer
+│   ├── skills/          # Skill packs (demo for now)
+│   ├── tests/           # Core unit tests
 │   ├── evals/           # Behavioral eval scenarios
 │   ├── pyproject.toml   # Python dependencies
 │   ├── .env.example     # Environment variables template
 │   ├── .env             # Your API keys (git-ignored)
 │   ├── Dockerfile       # Container image for Pipecat Cloud
 │   └── pcc-deploy.toml  # Pipecat Cloud deployment config
+├── supabase/migrations/ # Database schema
 ├── .gitignore           # Git ignore patterns
 └── README.md            # This file
 ```

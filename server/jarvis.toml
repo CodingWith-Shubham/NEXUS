@@ -1,0 +1,19 @@
+# JARVIS core configuration.
+
+[skills]
+# Skill packs to load, by folder name under skills/. Remove a name to unload
+# its tools and prompt section; the core never imports a pack directly.
+enabled = ["demo"]
+
+[voice]
+# Gemini Live works best with a small tool set. The registry warns past this.
+max_tools = 10
+# How often the voice front checks for finished tasks to announce.
+announce_poll_secs = 3
+
+[worker]
+# Text model for background jobs. WORKER_MODEL in .env overrides it.
+model = "gemini-3.6-flash"
+poll_secs = 2
+# Most model/tool round trips one task may take before it must answer.
+max_steps = 8

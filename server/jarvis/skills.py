@@ -1,0 +1,126 @@
+"""Skill packs: the ``@tool`` decorator, ``SkillPack`` and the loader.
+
+A skill pack is a folder ``skills/<name>/`` whose ``__init__.py`` defines
+``SKILL = SkillPack(...)``. A tool is an async function whose first parameter
+is ``ctx`` (a :class:`ToolContext`); its name, typed parameters and docstring
+become the schema the models see, the same way Pipecat direct functions work::
+
+    @tool(voice=True)
+    async def get_current_time(ctx: ToolContext, timezone: str = ""):
+        \"\"\"Get the current date and time.
+
+        Args:
+            timezone: IANA name such as "Asia/Dubai"; empty for the server's zone.
+        \"\"\"
+        return {"time": ...}
+
+Where a tool is offered:
+
+- ``voice=True``: to Gemini Live. Keep these fast (well under a second).
+- ``worker=True``: to the background worker's text model.
+- ``approval=True``: the call does not run; it becomes a pending action the
+  user must confirm. ``summary`` is a ``str.format`` template over the
+  arguments, read to the user when asking.
+"""
+
+import importlib
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from jarvis.registry import ToolRegistry
+    from jarvis.store import Store
+
+SKILLS_PACKAGE = "skills"
+TOOL_ATTR = "__jarvis_tool__"
+
+ToolFn = Callable[..., Awaitable[Any]]
+
+
+@dataclass
+class ToolContext:
+    """What a tool gets besides its arguments."""
+
+    store: "Store"
+    registry: "ToolRegistry"
+    source: str = "voice"  # "voice" or "worker": who is calling
+    session_id: str | None = None
+    task_id: str | None = None  # set when the worker runs a task
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    fn: ToolFn
+    voice: bool
+    worker: bool
+    approval: bool
+    summary: str | None
+
+
+def tool(
+    *,
+    voice: bool = False,
+    worker: bool = False,
+    approval: bool = False,
+    summary: str | None = None,
+) -> Callable[[ToolFn], ToolFn]:
+    """Mark an async function as a JARVIS tool. See the module docstring."""
+    if not (voice or worker):
+        raise ValueError("a tool must be offered to voice, worker, or both")
+
+    def decorate(fn: ToolFn) -> ToolFn:
+        setattr(
+            fn,
+            TOOL_ATTR,
+            ToolSpec(
+                name=fn.__name__,
+                fn=fn,
+                voice=voice,
+                worker=worker,
+                approval=approval,
+                summary=summary,
+            ),
+        )
+        return fn
+
+    return decorate
+
+
+def tool_spec(fn: ToolFn) -> ToolSpec:
+    spec = getattr(fn, TOOL_ATTR, None)
+    if spec is None:
+        raise ValueError(f"{getattr(fn, '__name__', fn)!r} is not decorated with @tool")
+    return spec
+
+
+@dataclass
+class SkillPack:
+    """One capability: its tools and the prompt sections that explain them."""
+
+    name: str
+    tools: list[ToolFn] = field(default_factory=list)
+    voice_prompt: str = ""  # appended to Gemini Live's system instruction
+    worker_prompt: str = ""  # appended to the worker's system instruction
+
+
+def read_prompt(package_file: str, filename: str) -> str:
+    """Read a prompt file that sits next to a pack's ``__init__.py``; empty if missing."""
+    path = Path(package_file).with_name(filename)
+    return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
+
+def load_skills(names: list[str]) -> list[SkillPack]:
+    """Import ``skills.<name>`` for each name and return its ``SKILL``."""
+    packs: list[SkillPack] = []
+    for name in names:
+        module = importlib.import_module(f"{SKILLS_PACKAGE}.{name}")
+        pack = getattr(module, "SKILL", None)
+        if not isinstance(pack, SkillPack):
+            raise ValueError(f"skills/{name}/__init__.py must define SKILL = SkillPack(...)")
+        if pack.name != name:
+            raise ValueError(f"skills/{name} declares SkillPack(name={pack.name!r})")
+        packs.append(pack)
+    return packs

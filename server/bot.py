@@ -37,6 +37,12 @@ from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.workers.runner import WorkerRunner
 
+from jarvis.announcer import Announcer
+from jarvis.app import build_core
+from jarvis.prompts import voice_instruction
+from jarvis.skills import ToolContext
+from jarvis.store import SupabaseStore
+
 load_dotenv(override=True)
 
 
@@ -52,17 +58,29 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     """
     logger.info("Starting bot")
 
+    # JARVIS core: skill packs from jarvis.toml, their tools behind the approval gate.
+    core = build_core()
+    store = await SupabaseStore.from_env()
+    tool_ctx = ToolContext(
+        store=store,
+        registry=core.registry,
+        source="voice",
+        session_id=runner_args.session_id,
+    )
+    logger.info(f"Voice tools: {core.registry.voice_tool_names()}")
+
     # Realtime LLM service (handles STT, LLM, and TTS internally)
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
             model=os.getenv("GOOGLE_MODEL"),
             voice=os.getenv("GOOGLE_VOICE_ID"),
-            system_instruction="You are a helpful assistant in a voice conversation. Your responses will be spoken aloud, so avoid emojis, bullet points, or other formatting that can't be spoken. Respond to what the user said in a creative, helpful, and brief way.",
+            system_instruction=voice_instruction(core.packs),
         ),
     )
 
-    context = LLMContext()
+    # Gemini Live fixes its tool set for the session, so every voice tool is listed up front.
+    context = LLMContext(tools=core.registry.voice_tools(tool_ctx))
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
@@ -92,6 +110,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     await runner.add_workers(worker)
 
+    # Speaks up when a background task finishes or the worker needs approval.
+    announcer = Announcer(store, llm, poll_secs=core.config.announce_poll_secs)
+
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         # Kick off the conversation
@@ -99,6 +120,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             {"role": "developer", "content": "Start by concisely introducing yourself."}
         )
         await worker.queue_frames([LLMRunFrame()])
+        announcer.start()
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -107,6 +129,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
+        await announcer.stop()
         await runner.cancel()
 
     await runner.run()

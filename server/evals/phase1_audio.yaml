@@ -1,0 +1,67 @@
+name: phase1_audio
+
+# Phase 1 core, spoken end to end: a fast tool, the approval gate, and a
+# delegated task the worker finishes and the bot announces.
+#
+# Needs the bot AND the worker running (two terminals, both in server/):
+#
+#   uv run bot.py
+#   uv run worker.py
+#   uv run pipecat eval run evals/phase1_audio.yaml -v      # third terminal
+#
+# Only deterministic checks (tool names, words in replies), so no judge LLM is
+# needed.
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: phase1_audio
+    turns:
+      # Wait out the greeting.
+      - expect:
+          - event: response
+
+      # A fast voice tool.
+      - user: "What time is it in Dubai right now?"
+        expect:
+          - event: function_call
+            calls:
+              - name: get_current_time
+          - event: response
+
+      # The approval gate: the action is parked, then confirmed.
+      - user: "Send a test message saying hello world."
+        expect:
+          - event: function_call
+            calls:
+              - name: send_test_message
+          - event: response
+      - user: "Yes, go ahead and send it."
+        expect:
+          - event: function_call
+            calls:
+              - name: confirm_action
+          - event: response
+
+      # Delegation: queued at once, finished by the worker, then announced.
+      - user: "Please write me a short memo about our new hybrid work policy. Take your time and let me know when it's ready."
+        expect:
+          - event: function_call
+            calls:
+              - name: delegate_task
+          - event: response
+      - expect:
+          - event: response
+            text_contains: "memo"
+            within_ms: 90000

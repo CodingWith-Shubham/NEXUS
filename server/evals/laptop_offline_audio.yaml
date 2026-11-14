@@ -1,0 +1,36 @@
+name: laptop_offline_audio
+
+# The laptop pack with the laptop agent STOPPED (no heartbeat for over 60 s):
+# JARVIS must say the laptop is offline and not claim anything ran.
+#
+#   uv run bot.py                                                # terminal 1 (agent not running)
+#   uv run pipecat eval run evals/laptop_offline_audio.yaml -v   # terminal 2
+#
+# The eval: criterion needs the judge LLM (local Ollama by default).
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: laptop_offline
+    turns:
+      - expect:
+          - event: response
+      - user: "What files are in my Downloads folder?"
+        expect:
+          - event: function_call
+            calls:
+              - name: laptop_find
+          - event: response
+            eval: "says the laptop is offline or unreachable, and does not list any files or claim it looked"
+            within_ms: 30000

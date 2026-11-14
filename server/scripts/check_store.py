@@ -1,12 +1,17 @@
-"""Check the Supabase store end to end: every Phase 1 and 2 operation, then clean up.
+"""Check the Supabase store end to end: Phase 1 and 2 operations and the laptop tables.
 
     uv run python scripts/check_store.py
 
 Writes rows tagged with a random marker, reads them back through the same
 methods the bot uses, and deletes them again. Exits non-zero on any failure.
+
+Laptop tables (0003_laptop.sql): the test command is written already expired, so
+a running laptop agent never picks it up. If SUPABASE_ANON_KEY is set, it also
+checks that the anon key can't read laptop_commands or claim without the token.
 """
 
 import asyncio
+import os
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -85,6 +90,60 @@ async def main() -> int:
         lambda rows: rows and rows[0]["summary"] == f"{tag} summary",
     )
 
+    # Laptop tables
+    command_id = str(uuid.uuid4())
+    past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+    await check(
+        "create_laptop_command",
+        store.create_laptop_command(
+            {
+                "id": command_id,
+                "tool": "list_dir",
+                "args": {"path": tag},
+                "status": "expired",
+                "signature": "check-not-a-real-signature",
+                "session_id": "check",
+                "expires_at": past,
+            }
+        ),
+        lambda r: r["id"] == command_id,
+    )
+    await check(
+        "get_laptop_command",
+        store.get_laptop_command(command_id),
+        lambda r: r and r["args"] == {"path": tag} and r["status"] == "expired",
+    )
+    beat = await check("laptop_heartbeat (None until the agent runs)", store.laptop_heartbeat(),
+                       lambda r: r is None or "last_seen" in r)  # fmt: skip
+    if beat:
+        print(f"      agent last seen {beat['last_seen']}, state {beat.get('state')}")
+
+    anon_key = os.getenv("SUPABASE_ANON_KEY")
+    if anon_key:
+        from supabase import acreate_client
+
+        anon = await acreate_client(os.environ["SUPABASE_URL"], anon_key)
+
+        async def anon_reads_nothing():
+            res = await anon.table("laptop_commands").select("id").limit(1).execute()
+            return res.data
+
+        async def anon_claim_without_token():
+            try:
+                await anon.rpc("laptop_claim_command", {"p_token": "wrong"}).execute()
+            except Exception as e:
+                return str(e)
+            return None
+
+        await check("anon key can't read laptop_commands", anon_reads_nothing(), lambda d: d == [])
+        await check(
+            "anon key can't claim without the agent token",
+            anon_claim_without_token(),
+            lambda err: err is not None and "unauthorized" in err,
+        )
+    else:
+        print("skip  anon-key checks (SUPABASE_ANON_KEY not set)")
+
     # Clean up everything tagged.
     for table, column in [
         ("pending_actions", "summary"),
@@ -98,6 +157,10 @@ async def main() -> int:
             await db.table(table).delete().like(column, f"{tag}%").execute()
         except Exception as e:
             print(f"cleanup of {table} failed: {e}")
+    try:
+        await db.table("laptop_commands").delete().eq("id", command_id).execute()
+    except Exception as e:
+        print(f"cleanup of laptop_commands failed: {e}")
 
     print("\nAll good." if not failures else f"\n{failures} check(s) failed.")
     return 1 if failures else 0

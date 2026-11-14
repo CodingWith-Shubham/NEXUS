@@ -46,6 +46,7 @@ from jarvis.search import SearchSourceRecorder, voice_tools_schema
 from jarvis.sessions import GREETING, build_session_context, summarize_and_save
 from jarvis.skills import ToolContext
 from jarvis.store import SupabaseStore
+from jarvis.voice_language import apply_transcription_hints
 
 load_dotenv(override=True)
 
@@ -73,11 +74,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         source="voice",
         session_id=runner_args.session_id,
         timezone=config.tz(),
+        config=config,
     )
     logger.info(f"Voice tools: {core.registry.voice_tool_names()}")
 
     # Date and time, recent conversation summaries, remembered facts.
     session_context = await build_session_context(store, config, core.packs)
+
+    # Transcribe the user with their language hints (see jarvis.voice_language).
+    apply_transcription_hints(config.languages)
 
     # Realtime LLM service (handles STT, LLM, and TTS internally)
     llm = GeminiLiveLLMService(
@@ -85,6 +90,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         settings=GeminiLiveLLMService.Settings(
             model=os.getenv("GOOGLE_MODEL"),
             voice=os.getenv("GOOGLE_VOICE_ID"),
+            language=config.languages[0] if config.languages else "en-US",
             system_instruction=voice_instruction(
                 core.packs,
                 web_search=config.web_search,
@@ -190,7 +196,30 @@ async def bot(runner_args: RunnerArguments):
     await run_bot(transport, runner_args)
 
 
-if __name__ == "__main__":
-    from pipecat.runner.run import main
+async def _oauth():
+    """The Google sign-in handler for the /auth routes, built on first use."""
+    global _OAUTH
+    if _OAUTH is None:
+        from jarvis.config import load_config
+        from jarvis.oauth import GoogleOAuth
 
+        config = load_config()
+        _OAUTH = GoogleOAuth.from_env(
+            await SupabaseStore.from_env(),
+            redirect_uri=config.oauth_redirect_uri,
+            sign_in_url=config.oauth_sign_in_url,
+        )
+    return _OAUTH
+
+
+_OAUTH = None
+
+
+if __name__ == "__main__":
+    from pipecat.runner.run import app, main
+
+    from jarvis.auth_routes import register_auth_routes
+
+    # Google sign-in on the same server: /auth/google, /auth/google/callback, /auth/status.
+    register_auth_routes(app, _oauth)
     main()

@@ -134,3 +134,18 @@ def test_web_search_runs_non_blocking_on_voice():
     handlers = {t.name: t.handler for t in core.registry.voice_tools(ctx)}
     assert handlers["web_search"]._pipecat_cancel_on_interruption is False
     assert not hasattr(handlers["remember"], "_pipecat_cancel_on_interruption")
+
+
+def test_transcription_hints_patch_gemini_live(monkeypatch):
+    import pipecat.services.google.gemini_live.llm as gemini_live
+
+    from jarvis.voice_language import apply_transcription_hints
+
+    monkeypatch.setattr(gemini_live, "AudioTranscriptionConfig", gemini_live.AudioTranscriptionConfig)
+    apply_transcription_hints(["en-IN", "hi-IN"])
+    assert gemini_live.AudioTranscriptionConfig().language_codes == ["en-IN", "hi-IN"]
+
+
+def test_prompt_says_check_tools_not_old_notes():
+    text = voice_instruction([])
+    assert "can be out of date" in text and "call the tool" in text

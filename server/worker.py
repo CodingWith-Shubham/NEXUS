@@ -29,6 +29,7 @@ async def main() -> None:
         poll_secs=core.config.worker_poll_secs,
         max_steps=core.config.worker_max_steps,
         timezone=core.config.tz(),
+        config=core.config,
     )
     await worker.run_forever()
 

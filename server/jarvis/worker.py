@@ -16,6 +16,7 @@ from typing import Any
 
 from loguru import logger
 
+from jarvis.config import Config
 from jarvis.llm import ChatModel
 from jarvis.registry import ToolRegistry
 from jarvis.skills import ToolContext
@@ -37,6 +38,7 @@ class TaskWorker:
         poll_secs: float = 2.0,
         max_steps: int = 8,
         timezone: tzinfo | None = None,
+        config: Config | None = None,
     ):
         self._store = store
         self._registry = registry
@@ -45,6 +47,7 @@ class TaskWorker:
         self._poll_secs = poll_secs
         self._max_steps = max_steps
         self._timezone = timezone
+        self._config = config
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
     async def run_forever(self) -> None:
@@ -73,6 +76,7 @@ class TaskWorker:
             session_id=task.get("session_id"),
             task_id=task["id"],
             timezone=self._timezone,
+            config=self._config,
         )
         now = datetime.now(self._timezone) if self._timezone else datetime.now().astimezone()
         request = (
@@ -105,14 +109,7 @@ class TaskWorker:
                 {
                     "role": "assistant",
                     "content": reply.text,
-                    "tool_calls": [
-                        {
-                            "id": call.id,
-                            "type": "function",
-                            "function": {"name": call.name, "arguments": call.arguments},
-                        }
-                        for call in reply.tool_calls
-                    ],
+                    "tool_calls": [call.as_message_part() for call in reply.tool_calls],
                 }
             )
             for call in reply.tool_calls:

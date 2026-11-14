@@ -1641,6 +1641,7 @@ name = "jarvis"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "pipecat-ai", extra = ["evals", "google", "runner", "webrtc"] },
     { name = "pipecatcloud" },
     { name = "supabase" },
@@ -1656,6 +1657,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=46" },
     { name = "pipecat-ai", extras = ["evals", "google", "runner", "silero", "webrtc"], specifier = ">=1.12.0" },
     { name = "pipecatcloud" },
     { name = "supabase", specifier = ">=2.34.1" },

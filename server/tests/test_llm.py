@@ -144,3 +144,45 @@ def test_default_config_is_nemotron_on_openrouter():
     assert [str(r) for r in llm.chain][0] == "openrouter:nvidia/nemotron-3.5-super-vl:free"
     assert config.providers["openrouter"]["api_key_env"] == "NEMOTRON_KEY"
     assert Config(skills=[]).worker_models[0].startswith("openrouter:nvidia/nemotron")
+
+
+async def test_provider_extras_on_tool_calls_are_kept_for_the_round_trip():
+    signature = {"google": {"thought_signature": "EnMKcQ..."}}
+    response = ChatCompletion.model_validate({
+        "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+        "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": None,
+            "tool_calls": [{"id": "c1", "type": "function", "extra_content": signature,
+                            "function": {"name": "f", "arguments": "{}"}}]}}]})
+    model, _ = chain("a:m1", outcomes={"a": [response]})
+    reply = await model.chat([{"role": "user", "content": "x"}])
+    part = reply.tool_calls[0].as_message_part()
+    assert part["extra_content"] == signature
+    assert part["function"] == {"name": "f", "arguments": "{}"} and part["id"] == "c1"
+
+
+def daily_limit_error():
+    request = httpx.Request("POST", "https://a.example/v1/chat/completions")
+    response = httpx.Response(429, request=request, json={"error": {"message": "x"}})
+    return openai.RateLimitError(
+        "Rate limit exceeded: free-models-per-day", response=response, body=None
+    )
+
+
+async def test_daily_limit_skips_model_afterwards():
+    model, log = chain(
+        "a:m1", "b:m2",
+        outcomes={"a": [daily_limit_error()], "b": [completion("one"), completion("two")]},
+    )
+    assert (await model.chat([{"role": "user", "content": "x"}])).text == "one"
+    assert (await model.chat([{"role": "user", "content": "x"}])).text == "two"
+    assert [p for p, _ in log] == ["a", "b", "b"]  # a not asked the second time
+
+
+async def test_per_minute_rate_limit_is_not_a_cooldown():
+    model, log = chain(
+        "a:m1", "b:m2",
+        outcomes={"a": [status_error(429), completion("a ok")], "b": [completion("b")]},
+    )
+    await model.chat([{"role": "user", "content": "x"}])
+    assert (await model.chat([{"role": "user", "content": "x"}])).text == "a ok"

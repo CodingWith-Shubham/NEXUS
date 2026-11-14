@@ -33,6 +33,8 @@ SUMMARY_PROMPT = """Summarize this conversation between a busy executive (User) 
 assistant (JARVIS) in two to four sentences, for JARVIS to read at the start of the next
 conversation. Cover what was discussed, what was decided or done, and anything left open or
 promised for later. Write in the third person ("The user asked..."). Plain text only.
+Don't record temporary technical problems (an account not connected yet, search or a service
+unavailable, errors) as open items; they are usually fixed by the next conversation.
 
 If nothing of substance happened (only greetings or a test), reply with exactly: NOTHING"""
 

@@ -186,6 +186,7 @@ async def test_worker_runs_tools_then_answers():
     # The tool call and its result went back to the model, in OpenAI format.
     assistant, tool_msg = llm.requests[1]["messages"][-2:]
     assert assistant["tool_calls"][0]["function"]["name"] == "get_current_time"
+    assert assistant["tool_calls"][0]["type"] == "function"
     assert tool_msg["role"] == "tool" and tool_msg["tool_call_id"] == "c1"
     assert "+04:00" in json.loads(tool_msg["content"])["iso"]
 

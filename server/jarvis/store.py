@@ -87,6 +87,11 @@ class Store(Protocol):
     ) -> Row: ...
     async def recent_session_summaries(self, limit: int = 3) -> list[Row]: ...
 
+    # provider sign-ins (token values are stored as given; jarvis.oauth encrypts them)
+    async def get_oauth_token(self, provider: str) -> Row | None: ...
+    async def save_oauth_token(self, provider: str, account: str, fields: dict) -> Row: ...
+    async def delete_oauth_token(self, provider: str, account: str) -> None: ...
+
 
 class SupabaseStore:
     """The core tables in Supabase, through the service_role key."""
@@ -370,6 +375,39 @@ class SupabaseStore:
         )
         return res.data
 
+    # provider sign-ins
+
+    async def get_oauth_token(self, provider: str) -> Row | None:
+        res = (
+            await self._db.table("oauth_tokens")
+            .select("*")
+            .eq("provider", provider)
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+
+    async def save_oauth_token(self, provider: str, account: str, fields: dict) -> Row:
+        row = {"provider": provider, "account": account, **fields, "updated_at": _now()}
+        res = (
+            await self._db.table("oauth_tokens")
+            .upsert(row, on_conflict="provider,account")
+            .execute()
+        )
+        return res.data[0]
+
+
+    async def delete_oauth_token(self, provider: str, account: str) -> None:
+        await (
+            self._db.table("oauth_tokens")
+            .delete()
+            .eq("provider", provider)
+            .eq("account", account)
+            .execute()
+        )
+
 
 def _escape_like(text: str) -> str:
     """Make user text match literally in a LIKE/ILIKE pattern."""
@@ -391,6 +429,7 @@ class MemoryStore:
         self.notes: list[Row] = []
         self.reminders: list[Row] = []
         self.summaries: list[Row] = []
+        self.oauth: dict[tuple[str, str], Row] = {}
         self._seq = itertools.count()
 
     def _stamp(self) -> str:
@@ -615,3 +654,18 @@ class MemoryStore:
     async def recent_session_summaries(self, limit: int = 3) -> list[Row]:
         rows = sorted(self.summaries, key=lambda r: r["ended_at"], reverse=True)
         return [dict(r) for r in rows[:limit]]
+
+    # provider sign-ins
+
+    async def get_oauth_token(self, provider: str) -> Row | None:
+        rows = [r for (p, _), r in self.oauth.items() if p == provider]
+        return dict(max(rows, key=lambda r: r["updated_at"])) if rows else None
+
+    async def save_oauth_token(self, provider: str, account: str, fields: dict) -> Row:
+        row = self.oauth.get((provider, account), {"provider": provider, "account": account})
+        row.update(fields, updated_at=self._stamp())
+        self.oauth[(provider, account)] = row
+        return dict(row)
+
+    async def delete_oauth_token(self, provider: str, account: str) -> None:
+        self.oauth.pop((provider, account), None)

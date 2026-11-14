@@ -77,8 +77,13 @@ class ToolRegistry:
         spec = registered.spec
         audit = dict(tool=name, session_id=ctx.session_id, task_id=ctx.task_id)
 
-        if spec.approval and not approved:
-            summary = _summarize(spec, args)
+        try:
+            needs_approval = not approved and await _needs_approval(spec, ctx, args)
+            summary = await _summarize(spec, ctx, args) if needs_approval else ""
+        except Exception as e:
+            logger.exception(f"Approval check for {name} failed")
+            return {"error": f"{name} failed: {e}"}
+        if needs_approval:
             action = await ctx.store.create_action(
                 tool=name,
                 args=args,
@@ -161,7 +166,15 @@ class ToolRegistry:
         ]
 
 
-def _summarize(spec: ToolSpec, args: dict[str, Any]) -> str:
+async def _needs_approval(spec: ToolSpec, ctx: ToolContext, args: dict[str, Any]) -> bool:
+    if isinstance(spec.approval, bool):
+        return spec.approval
+    return bool(await spec.approval(ctx, args))
+
+
+async def _summarize(spec: ToolSpec, ctx: ToolContext, args: dict[str, Any]) -> str:
+    if callable(spec.summary):
+        return await spec.summary(ctx, args)
     if spec.summary:
         try:
             return spec.summary.format(**args)

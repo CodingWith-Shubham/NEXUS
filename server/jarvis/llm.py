@@ -11,6 +11,7 @@ OpenRouter (Nemotron and others), NVIDIA's API, Gemini's OpenAI endpoint, ...
 """
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +48,19 @@ class ToolCall:
     id: str
     name: str
     arguments: str  # JSON text, as the model wrote it
+    # Provider-specific fields to send back unchanged with the call, e.g. Gemini's
+    # {"extra_content": {"google": {"thought_signature": ...}}}; Gemini 3 rejects a
+    # follow-up turn (400) without it.
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def as_message_part(self) -> dict[str, Any]:
+        """The call as it goes back in the assistant message (OpenAI format)."""
+        return {
+            **self.extra,
+            "id": self.id,
+            "type": "function",
+            "function": {"name": self.name, "arguments": self.arguments},
+        }
 
 
 @dataclass
@@ -58,6 +72,12 @@ class ChatReply:
 
 class AllModelsFailed(Exception):
     pass
+
+
+# A model that reports its daily quota used up is skipped this long, instead of
+# being retried (and waited on) at every step.
+DAILY_LIMIT_COOLDOWN_SECS = 3600
+_DAILY_LIMIT_MARKERS = ("per-day", "per day", "perday", "daily")
 
 
 class ChatModel:
@@ -82,6 +102,7 @@ class ChatModel:
         self._timeout_secs = timeout_secs
         self._max_retries = max_retries
         self._clients: dict[str, Any] = dict(clients or {})
+        self._cooldown_until: dict[str, float] = {}
 
     @property
     def chain(self) -> list[ModelRef]:
@@ -107,6 +128,9 @@ class ChatModel:
         """One completion. ``messages`` and ``tools`` are in OpenAI chat format."""
         errors: list[str] = []
         for ref in self._chain:
+            if self._cooldown_until.get(str(ref), 0) > time.monotonic():
+                errors.append(f"{ref}: daily limit (skipped)")
+                continue
             try:
                 client = self._client(ref.provider)
                 kwargs: dict[str, Any] = {"model": ref.model, "messages": messages}
@@ -116,6 +140,9 @@ class ChatModel:
             except (openai.APIError, AllModelsFailed) as e:
                 status = getattr(e, "status_code", None)
                 logger.warning(f"{ref} failed ({status or type(e).__name__}): {str(e)[:200]}")
+                if status == 429 and any(m in str(e).lower() for m in _DAILY_LIMIT_MARKERS):
+                    self._cooldown_until[str(ref)] = time.monotonic() + DAILY_LIMIT_COOLDOWN_SECS
+                    logger.warning(f"{ref} hit its daily limit; skipping it for an hour")
                 errors.append(f"{ref}: {status or type(e).__name__}")
                 continue
             reply = _to_reply(response, str(ref))
@@ -138,11 +165,17 @@ def _to_reply(response, model: str) -> ChatReply | None:
     if not getattr(response, "choices", None):
         return None
     message = response.choices[0].message
-    calls = [
-        ToolCall(id=c.id, name=c.function.name, arguments=c.function.arguments or "{}")
-        for c in (message.tool_calls or [])
-        if getattr(c, "function", None)
-    ]
+    calls = []
+    for c in message.tool_calls or []:
+        if not getattr(c, "function", None):
+            continue
+        dumped = c.model_dump(exclude_none=True) if hasattr(c, "model_dump") else {}
+        extra = {k: v for k, v in dumped.items() if k not in ("id", "type", "function", "index")}
+        calls.append(
+            ToolCall(
+                id=c.id, name=c.function.name, arguments=c.function.arguments or "{}", extra=extra
+            )
+        )
     text = (message.content or "").strip()
     if not text and not calls:
         return None

@@ -3,18 +3,22 @@
 [user]
 # IANA time zone for dates, times and reminders. Empty = the server's local zone.
 timezone = "Asia/Kolkata"
+# Languages you speak (BCP-47). The first is the voice's speech language; all are
+# hints for transcribing you, so accented English isn't misheard as another language.
+languages = ["en-IN", "hi-IN"]
 
 [skills]
 # Skill packs to load, by folder name under skills/. Remove a name to unload
 # its tools and prompt section; the core never imports a pack directly.
-# "demo" (Phase 1 test tools) is left out to keep the voice tool list under 10;
+# "demo" (Phase 1 test tools) is left out to keep the voice tool list short;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant"]
+enabled = ["assistant", "workspace"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
-# 10 core + assistant tools, plus web_search while web_search = "tool".
-max_tools = 11
+# 4 core + 6 assistant + 2 workspace reads (list_events, search_email), plus web_search
+# while web_search = "tool". All other calendar/email tools are worker-only.
+max_tools = 13
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live
@@ -38,15 +42,31 @@ max_results = 5
 # Tavily search depth: "basic" (1 credit), "advanced" (2 credits), "fast", "ultra-fast".
 depth = "basic"
 
+[workspace]
+# Calendar and email provider: "google" (Gmail + Google Calendar) or "microsoft"
+# (Microsoft Graph; not implemented yet, answers "not available").
+provider = "google"
+# Google OAuth: register redirect_uri exactly on the OAuth client in Google Cloud.
+# Sign in by opening sign_in_url while the bot is running.
+redirect_uri = "http://localhost:7860/auth/google/callback"
+sign_in_url = "http://localhost:7860/auth/google"
+# find_free_time only offers slots inside these hours (your time zone).
+working_hours = "09:00-18:00"
+
 [worker]
 # Text models for background tasks, session summaries and web-search answers, as
 # "provider:model". Tried in order: when one fails (rate limit, outage, empty reply)
 # the next is used. The voice (Gemini Live) is separate.
-# OpenRouter ":free" models: 20 requests/minute, 50/day (1000/day once you have bought
-# at least $10 of OpenRouter credits). Drop ":free" to use the paid, unlimited versions.
+# OpenRouter ":free" models share 20 requests/minute and 50/day across all of them
+# (1000/day once you have bought at least $10 of OpenRouter credits). Drop ":free" to
+# use the paid versions. The Gemini models are last resorts: free tier, 20 requests/day
+# each, separate from OpenRouter. A model that reports its daily limit is skipped
+# for an hour.
 models = [
     "openrouter:nvidia/nemotron-3.5-super-vl:free",
     "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free",
+    "gemini:gemini-3.5-flash-lite",
+    "gemini:gemini-3.1-flash-lite",
 ]
 poll_secs = 2
 # Most model/tool round trips one task may take before it must answer.
@@ -58,8 +78,8 @@ max_steps = 8
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "NEMOTRON_KEY"
 
-# Gemini's OpenAI-compatible endpoint; add e.g. "gemini:gemini-3.6-flash" to
-# [worker] models to use it (free tier: 20 requests/day per model).
+# Gemini's OpenAI-compatible endpoint (tool calls tested with the flash-lite models;
+# their thought signatures are passed back automatically).
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 api_key_env = "GOOGLE_API_KEY"

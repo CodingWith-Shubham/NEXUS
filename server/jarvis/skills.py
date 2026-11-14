@@ -20,7 +20,10 @@ Where a tool is offered:
 - ``worker=True``: to the background worker's text model.
 - ``approval=True``: the call does not run; it becomes a pending action the
   user must confirm. ``summary`` is a ``str.format`` template over the
-  arguments, read to the user when asking.
+  arguments, read to the user when asking. Either can also be an async
+  function ``(ctx, args)``: ``approval`` returning whether this particular call
+  needs approval (e.g. only meetings with other attendees), ``summary``
+  returning the text.
 - ``blocking=False``: on voice, the call runs in the background (Gemini Live's
   NON_BLOCKING tools), so the conversation goes on and the result is spoken
   when it arrives. For tools that take a few seconds.
@@ -34,6 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from jarvis.config import Config
     from jarvis.registry import ToolRegistry
     from jarvis.store import Store
 
@@ -41,6 +45,8 @@ SKILLS_PACKAGE = "skills"
 TOOL_ATTR = "__jarvis_tool__"
 
 ToolFn = Callable[..., Awaitable[Any]]
+ApprovalFn = Callable[["ToolContext", dict], Awaitable[bool]]
+SummaryFn = Callable[["ToolContext", dict], Awaitable[str]]
 
 
 @dataclass
@@ -55,6 +61,7 @@ class ToolContext:
     timezone: tzinfo | None = None  # the user's zone; None for the server's local zone
     # Sends a message to the connected client (an RTVI server message), when there is one.
     notify: Callable[[dict], Awaitable[None]] | None = None
+    config: "Config | None" = None  # jarvis.toml, for packs that need settings
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,8 @@ class ToolSpec:
     fn: ToolFn
     voice: bool
     worker: bool
-    approval: bool
-    summary: str | None
+    approval: "bool | ApprovalFn"
+    summary: "str | SummaryFn | None"
     blocking: bool = True
 
 
@@ -72,8 +79,8 @@ def tool(
     *,
     voice: bool = False,
     worker: bool = False,
-    approval: bool = False,
-    summary: str | None = None,
+    approval: "bool | ApprovalFn" = False,
+    summary: "str | SummaryFn | None" = None,
     blocking: bool = True,
 ) -> Callable[[ToolFn], ToolFn]:
     """Mark an async function as a JARVIS tool. See the module docstring."""

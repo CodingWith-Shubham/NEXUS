@@ -36,6 +36,15 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `search-sources` message. If search fails, JARVIS says it's unavailable and doesn't answer from
   memory. To add Exa or Serper, write a provider class and register it in `PROVIDERS`.
   `uv run python scripts/search.py "question"` runs one live search.
+- **Calendar and email** (`server/skills/workspace/`, Phase 3): one provider interface
+  (`server/jarvis/workspace/`), chosen with `[workspace] provider`. Google (Gmail + Calendar) is
+  implemented; Microsoft Graph is a stub. Sign in at `http://localhost:7860/auth/google`.
+  Tokens are encrypted with `JARVIS_TOKEN_KEY` and stored in `oauth_tokens`, and are refreshed
+  automatically. The voice gets `list_events` and `search_email`; everything else
+  (`find_free_time`, `create_meeting`, `update_meeting`, `cancel_meeting`, `read_email`,
+  `draft_email`, `send_email`, `reply_to_email`) runs in the worker through `delegate_task`.
+  Sending, replying, and meeting changes that involve other people need approval. Email content
+  is marked untrusted and is never followed as instructions.
 - **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, then
   `0002_assistant.sql`) create the tables. Run each once, in order, in the Supabase SQL editor.
   Then `uv run python scripts/check_store.py` checks every store operation against Supabase.

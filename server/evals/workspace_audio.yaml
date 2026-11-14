@@ -1,0 +1,43 @@
+name: workspace_audio
+
+# Calendar and email by voice: the quick reads Gemini Live calls itself, and a
+# send that is delegated to the worker and comes back for approval.
+# Sign in first (http://localhost:7860/auth/google); before that, the reads
+# answer that Google isn't connected, which also passes the first two turns.
+#
+#   uv run bot.py                                            # terminal 1
+#   uv run worker.py                                         # terminal 2
+#   uv run pipecat eval run evals/workspace_audio.yaml -v    # terminal 3
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: workspace_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "What's on my calendar tomorrow?"
+        expect:
+          - event: function_call
+            calls:
+              - name: list_events
+          - event: response
+
+      - user: "Do I have any unread emails?"
+        expect:
+          - event: function_call
+            calls:
+              - name: search_email
+          - event: response

@@ -175,29 +175,23 @@ async def test_web_search_tool_hands_excerpts_to_the_voice_model():
 # The answer writer
 
 
-class FakeGenai:
+class FakeLLM:
     def __init__(self, text):
-        self.aio = type("Aio", (), {})()
-        self.aio.models = self
-        self.text, self.prompt, self.config = text, None, None
+        self.text, self.system, self.prompt = text, None, None
 
-    async def generate_content(self, *, model, contents, config):
-        self.prompt, self.config = contents, config
-        return types.GenerateContentResponse(
-            candidates=[
-                types.Candidate(content=types.Content(role="model", parts=[types.Part(text=self.text)]))
-            ]
-        )
+    async def complete(self, system, user):
+        self.system, self.prompt = system, user
+        return self.text
 
 
 async def test_answer_writer_uses_only_the_results():
-    client = FakeGenai("About 7.4 million.")
-    writer = AnswerWriter("m", client=client)
+    llm = FakeLLM("About 7.4 million.")
+    writer = AnswerWriter(llm)
     answer = await writer.write("pune population", TAVILY_RESULTS["results"])
     assert answer == "About 7.4 million."
-    assert "https://en.wikipedia.org/wiki/Pune" in client.prompt
-    assert "Question: pune population" in client.prompt
-    instruction = " ".join(client.config.system_instruction.split())
+    assert "https://en.wikipedia.org/wiki/Pune" in llm.prompt
+    assert "Question: pune population" in llm.prompt
+    instruction = " ".join(llm.system.split())
     assert "using ONLY the web search results" in instruction
     assert "never fill gaps from your own knowledge" in instruction
 
@@ -248,10 +242,11 @@ async def test_google_provider_quota():
 
 def test_provider_chosen_from_config(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-x")
-    assert make_search_provider(Config(skills=[], search_provider="tavily")).name == "tavily"
-    assert make_search_provider(Config(skills=[], search_provider="google")).name == "google"
+    llm = FakeLLM("x")
+    assert make_search_provider(Config(skills=[], search_provider="tavily"), llm).name == "tavily"
+    assert make_search_provider(Config(skills=[], search_provider="google"), llm).name == "google"
     with pytest.raises(ValueError, match="not one of"):
-        make_search_provider(Config(skills=[], search_provider="bing"))
+        make_search_provider(Config(skills=[], search_provider="bing"), llm)
 
 
 # The web_search tool on top of a provider

@@ -1,0 +1,40 @@
+name: worker_audio
+
+# A task delegated by voice, run by the background worker (Nemotron by default,
+# see [worker] models), and announced by the voice when it finishes.
+#
+#   uv run bot.py                                         # terminal 1
+#   uv run worker.py                                      # terminal 2
+#   uv run pipecat eval run evals/worker_audio.yaml -v    # terminal 3
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: worker_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "Please write me a short memo about our new hybrid work policy, and let me know when it's ready."
+        expect:
+          - event: function_call
+            calls:
+              - name: delegate_task
+          - event: response
+
+      # The worker finishes in the background; the voice announces it unprompted.
+      - expect:
+          - event: response
+            text_matches: "(?i)memo|ready|done|finished|policy"
+            within_ms: 120000

@@ -165,8 +165,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             context,
             session_id=runner_args.session_id,
             started_at=started_at,
-            model=config.worker_model,
-            fallback_model=config.worker_fallback_model,
+            llm=core.llm,
         )
     except Exception as e:
         logger.error(f"Could not save the session summary: {e}")

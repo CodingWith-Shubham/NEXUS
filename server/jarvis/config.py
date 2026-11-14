@@ -1,13 +1,20 @@
 """Load ``jarvis.toml``."""
 
-import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
+
+DEFAULT_WORKER_MODELS = (
+    "openrouter:nvidia/nemotron-3.5-super-vl:free",
+    "openrouter:nvidia/nemotron-3-ultra-550b-a55b:free",
+)
+DEFAULT_PROVIDERS = {
+    "openrouter": {"base_url": "https://openrouter.ai/api/v1", "api_key_env": "NEMOTRON_KEY"},
+}
 DEFAULT_CONFIG_PATH = SERVER_DIR / "jarvis.toml"
 
 
@@ -22,8 +29,10 @@ class Config:
     search_provider: str = "tavily"  # see jarvis.search_providers.PROVIDERS
     search_max_results: int = 5
     search_depth: str = "basic"
-    worker_model: str = "gemini-3.6-flash"
-    worker_fallback_model: str = "gemini-3.5-flash"
+    search_google_model: str = "gemini-3.6-flash"  # for [search] provider = "google"
+    # The worker's text models, "provider:model", tried in order (see jarvis.llm).
+    worker_models: list[str] = field(default_factory=lambda: list(DEFAULT_WORKER_MODELS))
+    providers: dict[str, dict] = field(default_factory=lambda: dict(DEFAULT_PROVIDERS))
     worker_poll_secs: float = 2.0
     worker_max_steps: int = 8
 
@@ -59,8 +68,9 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         search_provider=str(search.get("provider", "tavily")).strip().lower(),
         search_max_results=int(search.get("max_results", 5)),
         search_depth=str(search.get("depth", "basic")),
-        worker_model=os.getenv("WORKER_MODEL") or worker.get("model", "gemini-3.6-flash"),
-        worker_fallback_model=worker.get("fallback_model", "gemini-3.5-flash"),
+        search_google_model=str(search.get("google_model", "gemini-3.6-flash")),
+        worker_models=list(worker.get("models", DEFAULT_WORKER_MODELS)),
+        providers={**DEFAULT_PROVIDERS, **data.get("providers", {})},
         worker_poll_secs=float(worker.get("poll_secs", 2)),
         worker_max_steps=int(worker.get("max_steps", 8)),
     )

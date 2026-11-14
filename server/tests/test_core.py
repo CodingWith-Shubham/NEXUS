@@ -1,12 +1,14 @@
 """Core behaviour against the in-memory store: no network, no API keys."""
 
+import json
+
 import pytest
-from google.genai import types
 
 from jarvis.announcer import Announcer
 from jarvis.app import build_core
 from jarvis.config import Config
 from jarvis.core_tools import CORE
+from jarvis.llm import ChatReply, ToolCall
 from jarvis.prompts import voice_instruction
 from jarvis.registry import ToolRegistry
 from jarvis.skills import SkillPack, ToolContext, tool
@@ -50,8 +52,10 @@ def test_schema_comes_from_signature_and_docstring():
     assert schema.required == ["request"]
     assert "ctx" not in schema.properties
     assert schema.properties["request"]["type"] == "string"
-    decl = ctx.registry.worker_declarations()[1]
-    assert decl["parameters_json_schema"]["type"] == "object"
+    tool = ctx.registry.worker_tools()[1]
+    assert tool["type"] == "function"
+    assert tool["function"]["name"] == "get_current_time"
+    assert tool["function"]["parameters"]["type"] == "object"
 
 
 def test_duplicate_tool_names_are_rejected():
@@ -139,64 +143,51 @@ async def test_delegate_and_status():
     assert store.tasks[queued["task_id"]]["session_id"] == "s1"
 
 
-class FakeModels:
-    """Stands in for client.aio.models: replays canned responses, records requests."""
+class FakeChatModel:
+    """Stands in for jarvis.llm.ChatModel: replays canned replies, records requests."""
 
-    def __init__(self, responses):
-        self._responses = list(responses)
+    def __init__(self, replies):
+        self._replies = list(replies)
         self.requests = []
 
-    async def generate_content(self, *, model, contents, config):
-        self.requests.append(list(contents))
-        return self._responses.pop(0)
+    async def chat(self, messages, *, tools=None):
+        self.requests.append({"messages": [dict(m) for m in messages], "tools": tools})
+        return self._replies.pop(0)
 
 
-class FakeClient:
-    def __init__(self, responses):
-        self.aio = type("Aio", (), {})()
-        self.aio.models = FakeModels(responses)
-
-
-def _call(name, **args):
-    return types.GenerateContentResponse(
-        candidates=[
-            types.Candidate(
-                content=types.Content(
-                    role="model",
-                    parts=[types.Part(function_call=types.FunctionCall(name=name, args=args))],
-                )
-            )
-        ]
-    )
+def _call(name, call_id="c1", **args):
+    return ChatReply(text="", tool_calls=[ToolCall(id=call_id, name=name, arguments=json.dumps(args))])
 
 
 def _text(text):
-    return types.GenerateContentResponse(
-        candidates=[types.Candidate(content=types.Content(role="model", parts=[types.Part(text=text)]))]
-    )
+    return ChatReply(text=text)
 
 
-async def _run_one(responses, request="What day is it?"):
+async def _run_one(replies, request="What day is it?"):
     ctx, store = make_ctx()
     await ctx.registry.execute("delegate_task", {"request": request}, ctx)
-    client = FakeClient(responses)
-    worker = TaskWorker(
-        store, ctx.registry, model="fake", system_instruction="sys", client=client, max_steps=3
-    )
+    llm = FakeChatModel(replies)
+    worker = TaskWorker(store, ctx.registry, llm=llm, system_instruction="sys", max_steps=3)
     task = await store.claim_next_task(worker.worker_id)
     await worker.run_task(task)
-    return store, store.tasks[task["id"]], client
+    return store, store.tasks[task["id"]], llm
 
 
 async def test_worker_runs_tools_then_answers():
-    store, task, client = await _run_one(
+    store, task, llm = await _run_one(
         [_call("get_current_time", timezone="Asia/Dubai"), _text("It is Sunday.")]
     )
     assert task["status"] == "done"
     assert task["result"] == "It is Sunday."
-    # The tool result went back to the model on the second request.
-    second = client.aio.models.requests[1]
-    assert second[-1].parts[0].function_response.name == "get_current_time"
+    first = llm.requests[0]
+    assert first["messages"][0] == {"role": "system", "content": "sys"}
+    assert "What day is it?" in first["messages"][1]["content"]
+    assert {t["function"]["name"] for t in first["tools"]} >= {"get_current_time"}
+    # The tool call and its result went back to the model, in OpenAI format.
+    assistant, tool_msg = llm.requests[1]["messages"][-2:]
+    assert assistant["tool_calls"][0]["function"]["name"] == "get_current_time"
+    assert tool_msg["role"] == "tool" and tool_msg["tool_call_id"] == "c1"
+    assert "+04:00" in json.loads(tool_msg["content"])["iso"]
 
 
 async def test_worker_hits_approval_gate():
@@ -209,10 +200,30 @@ async def test_worker_hits_approval_gate():
     assert action["status"] == "pending"
 
 
+async def test_worker_bad_tool_arguments_are_reported_not_fatal():
+    bad = ChatReply(text="", tool_calls=[ToolCall(id="c9", name="get_current_time", arguments="{oops")])
+    store, task, llm = await _run_one([bad, _text("Sorry, done.")])
+    assert task["status"] == "done"
+    assert "Invalid arguments" in json.loads(llm.requests[1]["messages"][-1]["content"])["error"]
+
+
 async def test_worker_step_limit_fails_task():
     store, task, _ = await _run_one([_call("get_current_time")] * 3)
     assert task["status"] == "failed"
     assert "steps" in task["error"]
+
+
+async def test_worker_model_failure_fails_task():
+    class Down:
+        async def chat(self, messages, *, tools=None):
+            raise RuntimeError("every worker model failed")
+
+    ctx, store = make_ctx()
+    await ctx.registry.execute("delegate_task", {"request": "x"}, ctx)
+    worker = TaskWorker(store, ctx.registry, llm=Down(), system_instruction="sys")
+    task = await store.claim_next_task(worker.worker_id)
+    await worker.run_task(task)
+    assert store.tasks[task["id"]]["status"] == "failed"
 
 
 # Announcer

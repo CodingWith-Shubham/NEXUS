@@ -7,8 +7,8 @@ assistant then says search is unavailable rather than answering from memory.
 
 Providers, chosen with ``[search] provider`` in jarvis.toml:
 
-- ``tavily``: Tavily's search API; the worker model writes the answer from the results.
-- ``google``: Google Search grounding on the worker model (needs a billed Gemini key).
+- ``tavily``: Tavily's search API; the worker model chain writes the answer from the results.
+- ``google``: Google Search grounding on a Gemini model (needs a billed Gemini key).
 
 To add one (Exa, Serper, ...): write a class with ``name`` and ``async search()``,
 and register it in :data:`PROVIDERS`.
@@ -28,6 +28,7 @@ from loguru import logger
 
 from jarvis.config import Config
 from jarvis.genai_retry import generate_content
+from jarvis.llm import ChatModel
 
 
 @dataclass
@@ -63,22 +64,11 @@ RESULT_CONTENT_CHARS = 1200
 class AnswerWriter:
     """Writes a spoken answer from search results with the worker's text model."""
 
-    def __init__(
-        self,
-        model: str,
-        *,
-        fallback_model: str | None = None,
-        timezone: tzinfo | None = None,
-        client: genai.Client | None = None,
-    ):
-        self._model = model
-        self._fallback_model = fallback_model
+    def __init__(self, llm: ChatModel, *, timezone: tzinfo | None = None):
+        self._llm = llm
         self._timezone = timezone
-        self._client = client
 
     async def write(self, query: str, results: list[dict[str, Any]]) -> str:
-        client = self._client or genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-        self._client = client
         now = datetime.now(self._timezone) if self._timezone else datetime.now().astimezone()
         blocks = []
         for i, r in enumerate(results, 1):
@@ -89,15 +79,7 @@ class AnswerWriter:
             f"Today is {now.strftime('%A %d %B %Y')}.\n\nQuestion: {query}\n\n"
             "Search results:\n\n" + "\n\n".join(blocks)
         )
-        response = await generate_content(
-            client,
-            model=self._model,
-            contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=WRITER_INSTRUCTION),
-            fallback_model=self._fallback_model,
-            attempts=2,
-        )
-        return (response.text or "").strip()
+        return (await self._llm.complete(WRITER_INSTRUCTION, prompt)).strip()
 
 
 # Tavily
@@ -268,39 +250,34 @@ def grounding_sources(response: types.GenerateContentResponse) -> list[dict[str,
 # Choosing a provider
 
 
-def _tavily(config: Config) -> SearchProvider:
+def _tavily(config: Config, llm: ChatModel) -> SearchProvider:
     key = os.getenv("TAVILY_API_KEY")
     if not key:
         logger.warning("Search provider is tavily but TAVILY_API_KEY is not set")
     return TavilyProvider(
         api_key=key,
-        writer=AnswerWriter(
-            config.worker_model,
-            fallback_model=config.worker_fallback_model,
-            timezone=config.tz(),
-        ),
+        writer=AnswerWriter(llm, timezone=config.tz()),
         max_results=config.search_max_results,
         search_depth=config.search_depth,
     )
 
 
-def _google(config: Config) -> SearchProvider:
-    return GoogleGroundingProvider(
-        config.worker_model, fallback_model=config.worker_fallback_model
-    )
+def _google(config: Config, llm: ChatModel) -> SearchProvider:
+    # Grounding is a Gemini feature, so this one always runs on Gemini.
+    return GoogleGroundingProvider(config.search_google_model)
 
 
-PROVIDERS: dict[str, Callable[[Config], SearchProvider]] = {
+PROVIDERS: dict[str, Callable[[Config, ChatModel], SearchProvider]] = {
     "tavily": _tavily,
     "google": _google,
 }
 
 
-def make_search_provider(config: Config) -> SearchProvider:
+def make_search_provider(config: Config, llm: ChatModel) -> SearchProvider:
     try:
         factory = PROVIDERS[config.search_provider]
     except KeyError:
         raise ValueError(
             f"[search] provider {config.search_provider!r} is not one of {sorted(PROVIDERS)}"
         ) from None
-    return factory(config)
+    return factory(config, llm)

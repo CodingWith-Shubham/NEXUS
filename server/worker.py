@@ -2,9 +2,9 @@
 
     uv run worker.py
 
-It polls Supabase for tasks queued by delegate_task, runs each with a Gemini
-text model (worker.model in jarvis.toml, or WORKER_MODEL), and writes the
-result back; the voice bot announces it.
+It polls Supabase for tasks queued by delegate_task, runs each on the worker
+model chain ([worker] models in jarvis.toml; Nemotron via OpenRouter by default),
+and writes the result back; the voice bot announces it.
 """
 
 import asyncio
@@ -24,12 +24,11 @@ async def main() -> None:
     worker = TaskWorker(
         store,
         core.registry,
-        model=core.config.worker_model,
+        llm=core.llm,
         system_instruction=worker_instruction(core.packs),
         poll_secs=core.config.worker_poll_secs,
         max_steps=core.config.worker_max_steps,
         timezone=core.config.tz(),
-        fallback_model=core.config.worker_fallback_model,
     )
     await worker.run_forever()
 

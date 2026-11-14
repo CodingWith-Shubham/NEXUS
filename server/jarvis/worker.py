@@ -1,22 +1,22 @@
-"""The background worker: claims queued tasks and runs each with a Gemini text model.
+"""The background worker: claims queued tasks and runs each with the worker's text model.
 
 Runs as its own process (``uv run worker.py``), so tasks keep going after a
 call ends. Each task is a small tool-calling loop over the registry's worker
-tools; every tool call goes through :meth:`ToolRegistry.execute`, so the
-approval gate applies to the worker too.
+tools, in OpenAI chat format, on the model chain from ``[worker] models``
+(see :mod:`jarvis.llm`). Every tool call goes through
+:meth:`ToolRegistry.execute`, so the approval gate applies to the worker too.
 """
 
 import asyncio
-import os
+import json
 import socket
 import uuid
 from datetime import datetime, tzinfo
+from typing import Any
 
-from google import genai
-from google.genai import types
 from loguru import logger
 
-from jarvis.genai_retry import generate_content
+from jarvis.llm import ChatModel
 from jarvis.registry import ToolRegistry
 from jarvis.skills import ToolContext
 from jarvis.store import Row, Store
@@ -32,28 +32,25 @@ class TaskWorker:
         store: Store,
         registry: ToolRegistry,
         *,
-        model: str,
+        llm: ChatModel,
         system_instruction: str,
-        client: genai.Client | None = None,
         poll_secs: float = 2.0,
         max_steps: int = 8,
         timezone: tzinfo | None = None,
-        fallback_model: str | None = None,
     ):
         self._store = store
         self._registry = registry
-        self._model = model
+        self._llm = llm
         self._system_instruction = system_instruction
-        self._client = client or genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         self._poll_secs = poll_secs
         self._max_steps = max_steps
         self._timezone = timezone
-        self._fallback_model = fallback_model
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
     async def run_forever(self) -> None:
+        chain = ", ".join(str(m) for m in getattr(self._llm, "chain", []))
         logger.info(
-            f"Worker {self.worker_id} polling for tasks (model {self._model}, "
+            f"Worker {self.worker_id} polling for tasks (models: {chain}; "
             f"tools: {self._registry.worker_tool_names() or 'none'})"
         )
         while True:
@@ -94,37 +91,45 @@ class TaskWorker:
         logger.info(f"Task {task['id']} done ({len(result)} chars)")
 
     async def _solve(self, request: str, ctx: ToolContext) -> str:
-        declarations = self._registry.worker_declarations()
-        config = types.GenerateContentConfig(
-            system_instruction=self._system_instruction,
-            tools=[types.Tool(function_declarations=declarations)] if declarations else None,
-            # We run the tool loop ourselves, so every call passes the approval gate.
-            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        )
-        contents: list[types.Content] = [
-            types.Content(role="user", parts=[types.Part(text=request)])
+        tools = self._registry.worker_tools()
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._system_instruction},
+            {"role": "user", "content": request},
         ]
         for _ in range(self._max_steps):
-            response = await generate_content(
-                self._client,
-                model=self._model,
-                contents=contents,
-                config=config,
-                fallback_model=self._fallback_model,
+            reply = await self._llm.chat(messages, tools=tools or None)
+            if not reply.tool_calls:
+                return reply.text
+            # The exchange is plain OpenAI format, so a fallback model can pick it up mid-task.
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": reply.text,
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {"name": call.name, "arguments": call.arguments},
+                        }
+                        for call in reply.tool_calls
+                    ],
+                }
             )
-            calls = response.function_calls or []
-            if not calls:
-                text = (response.text or "").strip()
-                if not text:
-                    raise RuntimeError("the model returned an empty answer")
-                return text
-            # Keep the model's turn as-is: it carries the thought signatures
-            # Gemini needs to continue a tool-calling exchange.
-            contents.append(response.candidates[0].content)
-            parts = []
-            for call in calls:
-                logger.debug(f"Task {ctx.task_id} calls {call.name}({call.args})")
-                result = await self._registry.execute(call.name, dict(call.args or {}), ctx)
-                parts.append(types.Part.from_function_response(name=call.name, response=result))
-            contents.append(types.Content(role="user", parts=parts))
+            for call in reply.tool_calls:
+                logger.debug(f"Task {ctx.task_id} calls {call.name}({call.arguments}) via {reply.model}")
+                try:
+                    args = json.loads(call.arguments or "{}")
+                    if not isinstance(args, dict):
+                        raise ValueError("arguments must be a JSON object")
+                except ValueError as e:
+                    result: dict[str, Any] = {"error": f"Invalid arguments for {call.name}: {e}"}
+                else:
+                    result = await self._registry.execute(call.name, args, ctx)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
         raise StepLimitReached(f"no answer after {self._max_steps} steps")

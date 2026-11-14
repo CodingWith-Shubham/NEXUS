@@ -141,16 +141,19 @@ class ToolRegistry:
             handler = tool_options(cancel_on_interruption=False, timeout_secs=60)(handler)
         return handler
 
-    def worker_declarations(self) -> list[dict[str, Any]]:
-        """The worker tools as Gemini function declarations (JSON schema parameters)."""
+    def worker_tools(self) -> list[dict[str, Any]]:
+        """The worker tools in OpenAI chat-completions format."""
         return [
             {
-                "name": t.schema.name,
-                "description": t.schema.description,
-                "parameters_json_schema": {
-                    "type": "object",
-                    "properties": t.schema.properties,
-                    "required": t.schema.required,
+                "type": "function",
+                "function": {
+                    "name": t.schema.name,
+                    "description": t.schema.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": t.schema.properties,
+                        "required": t.schema.required,
+                    },
                 },
             }
             for t in self._tools.values()

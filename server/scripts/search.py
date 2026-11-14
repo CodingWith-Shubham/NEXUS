@@ -14,12 +14,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv  # noqa: E402
 
 from jarvis.config import load_config  # noqa: E402
+from jarvis.llm import build_chat_model  # noqa: E402
 from jarvis.search_providers import SearchUnavailable, make_search_provider  # noqa: E402
 
 
 async def main(query: str) -> int:
     load_dotenv(override=True)
-    provider = make_search_provider(load_config())
+    config = load_config()
+    provider = make_search_provider(
+        config, build_chat_model(config.worker_models, config.providers)
+    )
     print(f"Provider: {provider.name}\nQuery: {query}\n")
     try:
         result = await provider.search(query)

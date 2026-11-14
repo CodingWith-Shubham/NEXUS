@@ -12,9 +12,12 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
 ## How JARVIS is put together
 
 - **Voice front** (`server/bot.py`): Gemini Live with a few fast tools plus `delegate_task`.
-- **Background worker** (`server/worker.py`): a Gemini text model in its own process. It takes
-  tasks from the Supabase `tasks` table, writes results back, and the voice front announces them,
-  either during the call or at the start of the next one.
+- **Background worker** (`server/worker.py`): runs in its own process. It takes tasks from the
+  Supabase `tasks` table, writes results back, and the voice front announces them, either during
+  the call or at the start of the next one. Its text models are listed in `[worker] models` in
+  `jarvis.toml` and tried in order (`server/jarvis/llm.py`, any OpenAI-compatible endpoint). The
+  default is NVIDIA Nemotron via OpenRouter (`NEMOTRON_KEY`). The same models also write session
+  summaries and web-search answers.
 - **Core** (`server/jarvis/`): storage, tool registry, skill loader, approval gate
   (`confirm_action` / `cancel_action`), `delegate_task` and `get_task_status`.
 - **Skill packs** (`server/skills/<name>/`): each has its own tools, prompt sections and tests.

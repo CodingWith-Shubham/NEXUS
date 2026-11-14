@@ -79,47 +79,41 @@ def test_transcript_keeps_only_the_spoken_exchange():
     )
 
 
-class FakeClient:
+class FakeLLM:
     def __init__(self, text):
-        self.aio = type("Aio", (), {})()
-        self.aio.models = self
         self.text = text
-        self.calls = 0
+        self.calls = []
 
-    async def generate_content(self, *, model, contents, config):
-        self.calls += 1
-        return types.GenerateContentResponse(
-            candidates=[
-                types.Candidate(
-                    content=types.Content(role="model", parts=[types.Part(text=self.text)])
-                )
-            ]
-        )
+    async def complete(self, system, user):
+        self.calls.append((system, user))
+        return self.text
 
 
 async def test_summary_saved_and_skipped():
     store = MemoryStore()
     started = datetime.now(UTC)
-    client = FakeClient("The user set a reminder to call Priya.")
+    llm = FakeLLM("The user set a reminder to call Priya.")
     summary = await summarize_and_save(
-        store, _context(), session_id="s1", started_at=started, model="m", client=client
+        store, _context(), session_id="s1", started_at=started, llm=llm
     )
     assert summary == "The user set a reminder to call Priya."
     assert store.summaries[0]["session_id"] == "s1"
 
     # Nothing of substance: the model says NOTHING and no row is written.
-    nothing = FakeClient("NOTHING")
+    nothing = FakeLLM("NOTHING")
     assert await summarize_and_save(
-        store, _context(), session_id="s2", started_at=started, model="m", client=nothing
+        store, _context(), session_id="s2", started_at=started, llm=nothing
     ) is None
     # No user turns at all: the model isn't even called.
     empty = LLMContext()
     empty.add_message({"role": "assistant", "content": "Hello?"})
-    unused = FakeClient("x")
+    unused = FakeLLM("x")
     assert await summarize_and_save(
-        store, empty, session_id="s3", started_at=started, model="m", client=unused
+        store, empty, session_id="s3", started_at=started, llm=unused
     ) is None
-    assert unused.calls == 0 and len(store.summaries) == 1
+    assert unused.calls == [] and len(store.summaries) == 1
+    # The transcript is what gets summarized.
+    assert "User: Remind me to call Priya tomorrow." in llm.calls[0][1]
 
 
 # Web search modes and the web_search tool

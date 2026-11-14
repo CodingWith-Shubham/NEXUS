@@ -6,16 +6,13 @@ remembered facts). When the session ends, its transcript is summarized by the
 worker's text model and saved for the next one.
 """
 
-import os
 from datetime import datetime
 
-from google import genai
-from google.genai import types
 from loguru import logger
 from pipecat.processors.aggregators.llm_context import LLMContext, standard_message_text
 
 from jarvis.config import Config
-from jarvis.genai_retry import generate_content
+from jarvis.llm import ChatModel
 from jarvis.skills import SkillPack
 from jarvis.store import Store
 
@@ -98,24 +95,17 @@ async def summarize_and_save(
     *,
     session_id: str | None,
     started_at: datetime,
-    model: str,
-    fallback_model: str | None = None,
-    client: genai.Client | None = None,
+    llm: ChatModel,
 ) -> str | None:
-    """Summarize a finished session and save it. Returns the summary, or None if skipped."""
+    """Summarize a finished session with the worker model and save it.
+
+    Returns the summary, or None if skipped.
+    """
     text = transcript(context)
     if "User:" not in text:
         logger.info("Session had no user turns; no summary saved")
         return None
-    client = client or genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-    response = await generate_content(
-        client,
-        model=model,
-        contents=text,
-        config=types.GenerateContentConfig(system_instruction=SUMMARY_PROMPT),
-        fallback_model=fallback_model,
-    )
-    summary = (response.text or "").strip()
+    summary = (await llm.complete(SUMMARY_PROMPT, text)).strip()
     if not summary or summary == "NOTHING":
         logger.info("Session had nothing worth summarizing")
         return None

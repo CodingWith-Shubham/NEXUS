@@ -18,6 +18,7 @@ Run the bot using::
 """
 
 import os
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -31,6 +32,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
@@ -40,6 +42,8 @@ from pipecat.workers.runner import WorkerRunner
 from jarvis.announcer import Announcer
 from jarvis.app import build_core
 from jarvis.prompts import voice_instruction
+from jarvis.search import SearchSourceRecorder, voice_tools_schema
+from jarvis.sessions import GREETING, build_session_context, summarize_and_save
 from jarvis.skills import ToolContext
 from jarvis.store import SupabaseStore
 
@@ -57,17 +61,23 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             standard web/telephony pipelines don't need it.
     """
     logger.info("Starting bot")
+    started_at = datetime.now(UTC)
 
     # JARVIS core: skill packs from jarvis.toml, their tools behind the approval gate.
     core = build_core()
+    config = core.config
     store = await SupabaseStore.from_env()
     tool_ctx = ToolContext(
         store=store,
         registry=core.registry,
         source="voice",
         session_id=runner_args.session_id,
+        timezone=config.tz(),
     )
     logger.info(f"Voice tools: {core.registry.voice_tool_names()}")
+
+    # Date and time, recent conversation summaries, remembered facts.
+    session_context = await build_session_context(store, config, core.packs)
 
     # Realtime LLM service (handles STT, LLM, and TTS internally)
     llm = GeminiLiveLLMService(
@@ -75,12 +85,27 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         settings=GeminiLiveLLMService.Settings(
             model=os.getenv("GOOGLE_MODEL"),
             voice=os.getenv("GOOGLE_VOICE_ID"),
-            system_instruction=voice_instruction(core.packs),
+            system_instruction=voice_instruction(
+                core.packs,
+                web_search=config.web_search,
+                session_context=session_context,
+            ),
         ),
     )
 
-    # Gemini Live fixes its tool set for the session, so every voice tool is listed up front.
-    context = LLMContext(tools=core.registry.voice_tools(tool_ctx))
+    # Tools can send things to the browser (e.g. web search sources) as RTVI messages.
+    async def notify_client(data: dict) -> None:
+        await llm.push_frame(RTVIServerMessageFrame(data=data))
+
+    tool_ctx.notify = notify_client
+
+    # Gemini Live fixes its tool set for the session, so every voice tool (and
+    # Google Search, in "live" web_search mode) is listed up front.
+    context = LLMContext(
+        tools=voice_tools_schema(
+            core.registry.voice_tools(tool_ctx), google_search=config.web_search == "live"
+        )
+    )
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
@@ -92,6 +117,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             transport.input(),
             user_aggregator,
             llm,
+            SearchSourceRecorder(llm, store, runner_args.session_id),
             transport.output(),
             assistant_aggregator,
         ]
@@ -116,9 +142,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         # Kick off the conversation
-        context.add_message(
-            {"role": "developer", "content": "Start by concisely introducing yourself."}
-        )
+        context.add_message({"role": "developer", "content": GREETING})
         await worker.queue_frames([LLMRunFrame()])
         announcer.start()
 
@@ -133,6 +157,19 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await runner.cancel()
 
     await runner.run()
+
+    # The session is over (however it ended): leave a summary for the next one.
+    try:
+        await summarize_and_save(
+            store,
+            context,
+            session_id=runner_args.session_id,
+            started_at=started_at,
+            model=config.worker_model,
+            fallback_model=config.worker_fallback_model,
+        )
+    except Exception as e:
+        logger.error(f"Could not save the session summary: {e}")
 
 
 async def bot(runner_args: RunnerArguments):

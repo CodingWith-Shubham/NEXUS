@@ -33,7 +33,8 @@ def test_core_and_demo_tools_load():
         "get_current_time",
         "send_test_message",
     ]
-    assert ctx.registry.worker_tool_names() == ["get_current_time", "send_test_message"]
+    # web_search is the worker's in the default "live" search mode.
+    assert ctx.registry.worker_tool_names() == ["web_search", "get_current_time", "send_test_message"]
 
 
 def test_unloading_a_pack_removes_its_tools_and_prompt():
@@ -49,7 +50,7 @@ def test_schema_comes_from_signature_and_docstring():
     assert schema.required == ["request"]
     assert "ctx" not in schema.properties
     assert schema.properties["request"]["type"] == "string"
-    decl = ctx.registry.worker_declarations()[0]
+    decl = ctx.registry.worker_declarations()[1]
     assert decl["parameters_json_schema"]["type"] == "object"
 
 

@@ -10,11 +10,13 @@ import asyncio
 import os
 import socket
 import uuid
+from datetime import datetime, tzinfo
 
 from google import genai
 from google.genai import types
 from loguru import logger
 
+from jarvis.genai_retry import generate_content
 from jarvis.registry import ToolRegistry
 from jarvis.skills import ToolContext
 from jarvis.store import Row, Store
@@ -35,6 +37,8 @@ class TaskWorker:
         client: genai.Client | None = None,
         poll_secs: float = 2.0,
         max_steps: int = 8,
+        timezone: tzinfo | None = None,
+        fallback_model: str | None = None,
     ):
         self._store = store
         self._registry = registry
@@ -43,6 +47,8 @@ class TaskWorker:
         self._client = client or genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         self._poll_secs = poll_secs
         self._max_steps = max_steps
+        self._timezone = timezone
+        self._fallback_model = fallback_model
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
 
     async def run_forever(self) -> None:
@@ -69,9 +75,15 @@ class TaskWorker:
             source="worker",
             session_id=task.get("session_id"),
             task_id=task["id"],
+            timezone=self._timezone,
+        )
+        now = datetime.now(self._timezone) if self._timezone else datetime.now().astimezone()
+        request = (
+            f"Current date and time: {now.strftime('%A %d %B %Y, %I:%M %p %Z')}.\n\n"
+            f"Job: {task['request']}"
         )
         try:
-            result = await self._solve(task["request"], ctx)
+            result = await self._solve(request, ctx)
         except Exception as e:
             logger.exception(f"Task {task['id']} failed")
             await self._store.finish_task(task["id"], "failed", error=str(e))
@@ -93,8 +105,12 @@ class TaskWorker:
             types.Content(role="user", parts=[types.Part(text=request)])
         ]
         for _ in range(self._max_steps):
-            response = await self._client.aio.models.generate_content(
-                model=self._model, contents=contents, config=config
+            response = await generate_content(
+                self._client,
+                model=self._model,
+                contents=contents,
+                config=config,
+                fallback_model=self._fallback_model,
             )
             calls = response.function_calls or []
             if not calls:

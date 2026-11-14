@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
-from pipecat.adapters.llm.schemas.direct_function import BaseDirectFunctionWrapper
+from pipecat.adapters.llm.schemas.direct_function import BaseDirectFunctionWrapper, tool_options
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from pipecat.services.llm_service import FunctionCallParams
 
@@ -136,6 +136,9 @@ class ToolRegistry:
             result = await self.execute(name, dict(params.arguments or {}), ctx)
             await params.result_callback(result)
 
+        if not self._tools[name].spec.blocking:
+            # Runs in the background; on gemini-3.8-live this is a NON_BLOCKING tool.
+            handler = tool_options(cancel_on_interruption=False, timeout_secs=60)(handler)
         return handler
 
     def worker_declarations(self) -> list[dict[str, Any]]:

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from jarvis.config import Config, load_config
 from jarvis.core_tools import CORE
 from jarvis.registry import ToolRegistry
+from jarvis.search import make_web_search_pack
+from jarvis.search_providers import make_search_provider
 from jarvis.skills import SkillPack, load_skills
 
 
@@ -18,5 +20,12 @@ class Core:
 def build_core(config: Config | None = None) -> Core:
     config = config or load_config()
     packs = load_skills(config.skills)
-    registry = ToolRegistry([CORE, *packs], max_voice_tools=config.max_voice_tools)
+    core_packs = [CORE]
+    if config.web_search != "off":
+        # "tool": voice and worker both get web_search. "live": Gemini Live
+        # searches by itself, so only the worker needs the tool.
+        core_packs.append(
+            make_web_search_pack(make_search_provider(config), voice=config.web_search == "tool")
+        )
+    registry = ToolRegistry([*core_packs, *packs], max_voice_tools=config.max_voice_tools)
     return Core(config=config, packs=packs, registry=registry)

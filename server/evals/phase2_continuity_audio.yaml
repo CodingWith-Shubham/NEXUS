@@ -1,0 +1,35 @@
+name: phase2_continuity_audio
+
+# Phase 2 session continuity: run AFTER evals/phase2_audio.yaml, as a new
+# session. The bot should know what it was told last time (memory loaded into
+# its instructions) and what the last conversation was about (session summary).
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: phase2_continuity_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "Where does my sister live?"
+        expect:
+          - event: response
+            text_contains: "Pune"
+
+      # Worded differently each run; any detail from last time counts.
+      - user: "What did we talk about last time?"
+        expect:
+          - event: response
+            text_matches: "(?i)priya|pune|remind|note|bank"

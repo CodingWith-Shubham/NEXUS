@@ -21,11 +21,15 @@ Where a tool is offered:
 - ``approval=True``: the call does not run; it becomes a pending action the
   user must confirm. ``summary`` is a ``str.format`` template over the
   arguments, read to the user when asking.
+- ``blocking=False``: on voice, the call runs in the background (Gemini Live's
+  NON_BLOCKING tools), so the conversation goes on and the result is spoken
+  when it arrives. For tools that take a few seconds.
 """
 
 import importlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +52,9 @@ class ToolContext:
     source: str = "voice"  # "voice" or "worker": who is calling
     session_id: str | None = None
     task_id: str | None = None  # set when the worker runs a task
+    timezone: tzinfo | None = None  # the user's zone; None for the server's local zone
+    # Sends a message to the connected client (an RTVI server message), when there is one.
+    notify: Callable[[dict], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,7 @@ class ToolSpec:
     worker: bool
     approval: bool
     summary: str | None
+    blocking: bool = True
 
 
 def tool(
@@ -66,6 +74,7 @@ def tool(
     worker: bool = False,
     approval: bool = False,
     summary: str | None = None,
+    blocking: bool = True,
 ) -> Callable[[ToolFn], ToolFn]:
     """Mark an async function as a JARVIS tool. See the module docstring."""
     if not (voice or worker):
@@ -82,6 +91,7 @@ def tool(
                 worker=worker,
                 approval=approval,
                 summary=summary,
+                blocking=blocking,
             ),
         )
         return fn
@@ -96,6 +106,9 @@ def tool_spec(fn: ToolFn) -> ToolSpec:
     return spec
 
 
+SessionContextFn = Callable[["Store"], Awaitable[str]]
+
+
 @dataclass
 class SkillPack:
     """One capability: its tools and the prompt sections that explain them."""
@@ -104,6 +117,9 @@ class SkillPack:
     tools: list[ToolFn] = field(default_factory=list)
     voice_prompt: str = ""  # appended to Gemini Live's system instruction
     worker_prompt: str = ""  # appended to the worker's system instruction
+    # Called at the start of each voice session; the text it returns is added to
+    # the system instruction (e.g. what the assistant remembers about the user).
+    session_context: SessionContextFn | None = None
 
 
 def read_prompt(package_file: str, filename: str) -> str:

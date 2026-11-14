@@ -1,0 +1,47 @@
+name: search_tavily_audio
+
+# Live web search by voice, through the configured provider (Tavily by default).
+# Needs web_search = "tool" in jarvis.toml and TAVILY_API_KEY in .env.
+# Each run spends 1 Tavily credit and one worker-model request.
+#
+#   uv run bot.py                                                 # terminal 1
+#   uv run pipecat eval run evals/search_tavily_audio.yaml -v     # terminal 2
+#
+# The source URLs land in audit_log (event web_search) and in the browser's
+# Events panel as a "search-sources" server message.
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: search_tavily_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "Search the web: what is the current population of Pune?"
+        expect:
+          - event: function_call
+            calls:
+              - name: web_search
+          # The search runs in the background: first a short "checking" reply...
+          - event: response
+          # ...then the answer when the results arrive, with a figure from them.
+          - event: response
+            text_matches: "(?i)million|lakh|crore|[0-9]"
+            within_ms: 45000
+
+      - user: "Where did that information come from?"
+        expect:
+          - event: response
+            text_matches: "(?i)wiki|population|census|worldometer|review|site|source"

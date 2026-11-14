@@ -70,6 +70,23 @@ class Store(Protocol):
         task_id: str | None = None,
     ) -> None: ...
 
+    # memory
+    async def add_memory(self, kind: str, content: str) -> Row: ...
+    async def search_memory(self, query: str, limit: int = 5) -> list[Row]: ...
+    async def recent_memories(self, limit: int = 200) -> list[Row]: ...
+
+    # notes and reminders
+    async def add_note(self, content: str, session_id: str | None) -> Row: ...
+    async def list_notes(self, query: str = "", limit: int = 10) -> list[Row]: ...
+    async def add_reminder(self, text: str, due_at: str, session_id: str | None) -> Row: ...
+    async def list_reminders(self, include_done: bool = False, limit: int = 20) -> list[Row]: ...
+
+    # session continuity
+    async def save_session_summary(
+        self, session_id: str | None, summary: str, started_at: str | None
+    ) -> Row: ...
+    async def recent_session_summaries(self, limit: int = 3) -> list[Row]: ...
+
 
 class SupabaseStore:
     """The core tables in Supabase, through the service_role key."""
@@ -262,6 +279,106 @@ class SupabaseStore:
         except Exception as e:  # an audit write must never break the action it records
             logger.error(f"audit_log write failed for {event}/{tool}: {e}")
 
+    # memory
+
+    async def add_memory(self, kind: str, content: str) -> Row:
+        # The same fact said twice is refreshed, not stored twice.
+        existing = (
+            await self._db.table("memory")
+            .select("*")
+            .eq("kind", kind)
+            .ilike("content", _escape_like(content))
+            .limit(1)
+            .execute()
+        )
+        if existing.data:
+            res = (
+                await self._db.table("memory")
+                .update({"updated_at": _now()})
+                .eq("id", existing.data[0]["id"])
+                .execute()
+            )
+            return {**res.data[0], "duplicate": True}
+        res = await self._db.table("memory").insert({"kind": kind, "content": content}).execute()
+        return res.data[0]
+
+    async def search_memory(self, query: str, limit: int = 5) -> list[Row]:
+        res = await self._db.rpc("search_memory", {"p_query": query, "p_limit": limit}).execute()
+        return res.data
+
+    async def recent_memories(self, limit: int = 200) -> list[Row]:
+        res = (
+            await self._db.table("memory")
+            .select("id,kind,content,updated_at")
+            .order("updated_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data
+
+    # notes and reminders
+
+    async def add_note(self, content: str, session_id: str | None) -> Row:
+        res = (
+            await self._db.table("notes")
+            .insert({"content": content, "session_id": session_id})
+            .execute()
+        )
+        return res.data[0]
+
+    async def list_notes(self, query: str = "", limit: int = 10) -> list[Row]:
+        q = self._db.table("notes").select("*")
+        if query:
+            q = q.ilike("content", f"%{_escape_like(query)}%")
+        res = await q.order("created_at", desc=True).limit(limit).execute()
+        return res.data
+
+    async def add_reminder(self, text: str, due_at: str, session_id: str | None) -> Row:
+        res = (
+            await self._db.table("reminders")
+            .insert({"text": text, "due_at": due_at, "session_id": session_id})
+            .execute()
+        )
+        return res.data[0]
+
+    async def list_reminders(self, include_done: bool = False, limit: int = 20) -> list[Row]:
+        q = self._db.table("reminders").select("*")
+        if not include_done:
+            q = q.eq("status", "pending")
+        res = await q.order("due_at").limit(limit).execute()
+        return res.data
+
+    # session continuity
+
+    async def save_session_summary(
+        self, session_id: str | None, summary: str, started_at: str | None
+    ) -> Row:
+        res = (
+            await self._db.table("session_summaries")
+            .insert({"session_id": session_id, "summary": summary, "started_at": started_at})
+            .execute()
+        )
+        return res.data[0]
+
+    async def recent_session_summaries(self, limit: int = 3) -> list[Row]:
+        res = (
+            await self._db.table("session_summaries")
+            .select("*")
+            .order("ended_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data
+
+
+def _escape_like(text: str) -> str:
+    """Make user text match literally in a LIKE/ILIKE pattern."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in "".join(c.lower() if c.isalnum() else " " for c in text).split() if len(w) > 2}
+
 
 class MemoryStore:
     """In-memory stand-in for SupabaseStore, for tests."""
@@ -270,6 +387,10 @@ class MemoryStore:
         self.tasks: dict[str, Row] = {}
         self.actions: dict[str, Row] = {}
         self.audit_log: list[Row] = []
+        self.memories: list[Row] = []
+        self.notes: list[Row] = []
+        self.reminders: list[Row] = []
+        self.summaries: list[Row] = []
         self._seq = itertools.count()
 
     def _stamp(self) -> str:
@@ -411,3 +532,86 @@ class MemoryStore:
                 "task_id": task_id,
             }
         )
+
+    # memory
+
+    async def add_memory(self, kind: str, content: str) -> Row:
+        for row in self.memories:
+            if row["kind"] == kind and row["content"].lower() == content.lower():
+                row["updated_at"] = self._stamp()
+                return {**row, "duplicate": True}
+        row = {
+            "id": str(uuid.uuid4()),
+            "kind": kind,
+            "subject": None,
+            "content": content,
+            "created_at": self._stamp(),
+            "updated_at": self._stamp(),
+        }
+        self.memories.append(row)
+        return dict(row)
+
+    async def search_memory(self, query: str, limit: int = 5) -> list[Row]:
+        # Stand-in for the Postgres full-text search: rank by shared words.
+        wanted = _words(query)
+        scored = [(len(wanted & _words(r["content"])), r) for r in self.memories]
+        hits = [r for score, r in sorted(scored, key=lambda s: -s[0]) if score > 0]
+        return [dict(r) for r in hits[:limit]]
+
+    async def recent_memories(self, limit: int = 200) -> list[Row]:
+        rows = sorted(self.memories, key=lambda r: r["updated_at"], reverse=True)
+        return [dict(r) for r in rows[:limit]]
+
+    # notes and reminders
+
+    async def add_note(self, content: str, session_id: str | None) -> Row:
+        row = {
+            "id": str(uuid.uuid4()),
+            "content": content,
+            "session_id": session_id,
+            "created_at": self._stamp(),
+        }
+        self.notes.append(row)
+        return dict(row)
+
+    async def list_notes(self, query: str = "", limit: int = 10) -> list[Row]:
+        rows = [r for r in self.notes if query.lower() in r["content"].lower()]
+        rows.sort(key=lambda r: r["created_at"], reverse=True)
+        return [dict(r) for r in rows[:limit]]
+
+    async def add_reminder(self, text: str, due_at: str, session_id: str | None) -> Row:
+        row = {
+            "id": str(uuid.uuid4()),
+            "text": text,
+            "due_at": due_at,
+            "status": "pending",
+            "session_id": session_id,
+            "created_at": self._stamp(),
+            "delivered_at": None,
+        }
+        self.reminders.append(row)
+        return dict(row)
+
+    async def list_reminders(self, include_done: bool = False, limit: int = 20) -> list[Row]:
+        rows = [r for r in self.reminders if include_done or r["status"] == "pending"]
+        rows.sort(key=lambda r: datetime.fromisoformat(r["due_at"]))
+        return [dict(r) for r in rows[:limit]]
+
+    # session continuity
+
+    async def save_session_summary(
+        self, session_id: str | None, summary: str, started_at: str | None
+    ) -> Row:
+        row = {
+            "id": str(uuid.uuid4()),
+            "session_id": session_id,
+            "summary": summary,
+            "started_at": started_at,
+            "ended_at": self._stamp(),
+        }
+        self.summaries.append(row)
+        return dict(row)
+
+    async def recent_session_summaries(self, limit: int = 3) -> list[Row]:
+        rows = sorted(self.summaries, key=lambda r: r["ended_at"], reverse=True)
+        return [dict(r) for r in rows[:limit]]

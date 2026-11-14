@@ -1,19 +1,47 @@
 # JARVIS core configuration.
 
+[user]
+# IANA time zone for dates, times and reminders. Empty = the server's local zone.
+timezone = "Asia/Kolkata"
+
 [skills]
 # Skill packs to load, by folder name under skills/. Remove a name to unload
 # its tools and prompt section; the core never imports a pack directly.
-enabled = ["demo"]
+# "demo" (Phase 1 test tools) is left out to keep the voice tool list under 10;
+# add it back to run evals/phase1_audio.yaml.
+enabled = ["assistant"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
-max_tools = 10
+# 10 core + assistant tools, plus web_search while web_search = "tool".
+max_tools = 11
+# Web search for current information, with source URLs:
+#   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
+#            Search quota on the Gemini key (a billed project); without it Gemini Live
+#            refuses the whole session.
+#   "tool" = a web_search tool backed by the [search] provider below.
+#   "off"  = no web search.
+web_search = "tool"
+# How many recent conversation summaries to load at the start of a session.
+session_summaries_in_prompt = 3
 # How often the voice front checks for finished tasks to announce.
 announce_poll_secs = 3
 
+[search]
+# Who answers web_search (in "tool" mode, and for the worker in any mode):
+#   "tavily" = Tavily search API (TAVILY_API_KEY); the worker model writes the answer.
+#   "google" = Google Search grounding on the worker model (needs a billed Gemini key).
+provider = "tavily"
+# Results fetched per search. Tavily: 0-20.
+max_results = 5
+# Tavily search depth: "basic" (1 credit), "advanced" (2 credits), "fast", "ultra-fast".
+depth = "basic"
+
 [worker]
-# Text model for background jobs. WORKER_MODEL in .env overrides it.
+# Text model for background jobs and session summaries. WORKER_MODEL in .env overrides it.
 model = "gemini-3.6-flash"
+# Used when the main model is overloaded (Gemini 503 "high demand") after retries.
+fallback_model = "gemini-3.5-flash"
 poll_secs = 2
 # Most model/tool round trips one task may take before it must answer.
 max_steps = 8

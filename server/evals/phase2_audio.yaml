@@ -1,0 +1,65 @@
+name: phase2_audio
+
+# Phase 2, spoken: memory, notes, reminders and a web search.
+# Run evals/phase2_continuity_audio.yaml afterwards (a new session) to check
+# that the memory and this session's summary carry over.
+#
+#   uv run bot.py                                            # terminal 1
+#   uv run pipecat eval run evals/phase2_audio.yaml -v       # terminal 2
+#
+# Deterministic checks only, so no judge LLM is needed. Search grounding isn't a
+# function call, so its sources show in the bot log ("Web search sources") and
+# in audit_log (event web_search), not as an expectation here.
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: phase2_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "Please remember that my sister Priya lives in Pune."
+        expect:
+          - event: function_call
+            calls:
+              - name: remember
+          - event: response
+
+      - user: "Add a note: call the bank about the credit card."
+        expect:
+          - event: function_call
+            calls:
+              - name: add_note
+          - event: response
+
+      - user: "Remind me to call Priya tomorrow at nine in the morning."
+        expect:
+          - event: function_call
+            calls:
+              - name: add_reminder
+          - event: response
+
+      - user: "What reminders do I have?"
+        expect:
+          - event: function_call
+            calls:
+              - name: list_reminders
+          - event: response
+            text_contains: "Priya"
+
+      - user: "Search the web: what is the current population of Pune?"
+        expect:
+          - event: response
+            within_ms: 30000

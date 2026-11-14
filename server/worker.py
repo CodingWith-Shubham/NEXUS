@@ -28,6 +28,8 @@ async def main() -> None:
         system_instruction=worker_instruction(core.packs),
         poll_secs=core.config.worker_poll_secs,
         max_steps=core.config.worker_max_steps,
+        timezone=core.config.tz(),
+        fallback_model=core.config.worker_fallback_model,
     )
     await worker.run_forever()
 

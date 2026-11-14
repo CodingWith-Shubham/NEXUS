@@ -19,11 +19,27 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   (`confirm_action` / `cancel_action`), `delegate_task` and `get_task_status`.
 - **Skill packs** (`server/skills/<name>/`): each has its own tools, prompt sections and tests.
   They are listed in `server/jarvis.toml`; remove a name to unload that pack.
-- **Database**: `supabase/migrations/0001_core.sql` creates the tables `memory`, `tasks`,
-  `pending_actions`, `audit_log` and `oauth_tokens`. Run it once in the Supabase SQL editor.
+- **General assistant** (`server/skills/assistant/`, Phase 2): `remember` / `recall` (long-term
+  memory in four categories), `add_note` / `list_notes`, and `add_reminder` / `list_reminders`.
+  Reminders are stored and listed; nothing delivers them yet.
+- **Session continuity** (`server/jarvis/sessions.py`): each session starts with the current
+  date and time, the last few conversation summaries and the most relevant memories. When it
+  ends, a short summary is saved.
+- **Web search** (`server/jarvis/search.py`, `server/jarvis/search_providers.py`): set
+  `[voice] web_search` in `jarvis.toml`. `"live"` turns on Google Search grounding inside Gemini
+  Live, which needs a billed Gemini key. `"tool"` adds a `web_search` tool backed by
+  `[search] provider`: `"tavily"` (needs `TAVILY_API_KEY`; the worker model writes the spoken
+  answer from the results) or `"google"`. Source URLs go to `audit_log` and to the browser as a
+  `search-sources` message. If search fails, JARVIS says it's unavailable and doesn't answer from
+  memory. To add Exa or Serper, write a provider class and register it in `PROVIDERS`.
+  `uv run python scripts/search.py "question"` runs one live search.
+- **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, then
+  `0002_assistant.sql`) create the tables. Run each once, in order, in the Supabase SQL editor.
+  Then `uv run python scripts/check_store.py` checks every store operation against Supabase.
 
 Run JARVIS in two terminals from `server/`: `uv run bot.py` and `uv run worker.py`.
-Unit tests: `uv run pytest`. Spoken Phase 1 check: `uv run pipecat eval run evals/phase1_audio.yaml -v`.
+Unit tests: `uv run pytest`. Spoken checks: `evals/phase2_audio.yaml`, then
+`evals/phase2_continuity_audio.yaml` (run with `uv run pipecat eval run <file> -v`).
 
 ## Setup
 

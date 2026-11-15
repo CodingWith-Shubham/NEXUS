@@ -12,7 +12,7 @@ languages = ["en-IN", "hi-IN"]
 # its tools and prompt section; the core never imports a pack directly.
 # "demo" (Phase 1 test tools) is left out to keep the voice tool list short;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant", "workspace", "research", "sales"]
+enabled = ["assistant", "workspace", "research", "sales", "marketing"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
@@ -22,7 +22,9 @@ enabled = ["assistant", "workspace", "research", "sales"]
 # plus web_search while web_search = "tool". Everything else is worker-only.
 # That's a lot for Gemini Live: if it starts picking the wrong tool, unload a pack you
 # aren't using, or move rare tools to worker-only.
-max_tools = 23
+# + 6 marketing (draft_post, create_post, comment_on_post, react_to_post, schedule_post,
+# manage_scheduled_posts).
+max_tools = 29
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live
@@ -153,3 +155,15 @@ provider = "signalhire"
 # With a public URL (e.g. an ngrok https address forwarding to port 7860), set it here
 # and lookups use the full asynchronous mode with the callback.
 callback_base_url = ""
+
+[linkedin]
+# The marketing pack's LinkedIn connection (per user, on /settings). Only "official" (LinkedIn's
+# documented API) is built; "third_party" is a documented stub.
+provider = "official"
+# Linkedin-Version header (YYYYMM). LinkedIn supports each monthly version for about a year:
+# move this forward at least once a year.
+api_version = "202610"
+# Register exactly this on the LinkedIn app (Auth tab > Authorized redirect URLs).
+redirect_uri = "http://localhost:7860/auth/linkedin/callback"
+# Connections last 60 days; the user is reminded this many days before.
+warn_days = 7

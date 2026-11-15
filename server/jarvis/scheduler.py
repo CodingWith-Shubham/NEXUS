@@ -11,6 +11,9 @@ rotate through options ("one industry per day").
 If the worker was off when a run was due, that run happens once when it comes
 back; missed days don't pile up.
 
+A one-off job (:func:`create_one_off`, ``params.once``) runs at one exact time
+and is then deleted; e.g. publishing a scheduled LinkedIn post.
+
 Skill packs create and manage schedules with :func:`create_schedule`,
 :func:`list_schedules` and :func:`set_schedule_status` on the user's store.
 """
@@ -156,6 +159,41 @@ async def create_schedule(
     )
 
 
+async def create_one_off(
+    store: Store, *, kind: str, title: str, run_at: datetime, timezone: str, params: dict | None = None
+) -> Row:
+    """A job that runs once at ``run_at`` (aware datetime) and then disappears."""
+    local = run_at.astimezone(zone(timezone))
+    return await store.insert(
+        TABLE,
+        {
+            "kind": kind,
+            "title": title,
+            "days": [local.weekday()],
+            "time_of_day": local.strftime("%H:%M"),
+            "timezone": timezone,
+            "params": {**(params or {}), "once": True},
+            "status": "active",
+            "run_count": 0,
+            "next_run_at": run_at.isoformat(),
+        },
+    )
+
+
+async def move_one_off(store: Store, schedule_id: str, run_at: datetime) -> Row | None:
+    row = await store.find_one(TABLE, id=schedule_id)
+    if row is None:
+        return None
+    local = run_at.astimezone(zone(row["timezone"]))
+    changed = await store.update(
+        TABLE,
+        {"next_run_at": run_at.isoformat(), "days": [local.weekday()],
+         "time_of_day": local.strftime("%H:%M"), "updated_at": datetime.now(UTC).isoformat()},
+        where={"id": schedule_id},
+    )
+    return changed[0] if changed else None
+
+
 async def list_schedules(store: Store, kind: str | None = None) -> list[Row]:
     return await store.find(TABLE, where={"kind": kind} if kind else None, order="created_at")
 
@@ -215,6 +253,9 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Schedule {row['id']} couldn't queue its task: {e}")
             last_task = row.get("last_task_id")
+        if (row.get("params") or {}).get("once"):
+            await store.delete(TABLE, where={"id": row["id"]})  # done: it ran its one time
+            return
         following = next_run(row["days"], row["time_of_day"], zone(row["timezone"]), now)
         await store.update(
             TABLE,

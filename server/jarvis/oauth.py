@@ -72,10 +72,12 @@ class ConnectStates:
     restart forgets every outstanding state (the user just presses Connect again).
     """
 
-    def __init__(self, secret: str, *, ttl_secs: int = STATE_TTL_SECS):
+    def __init__(self, secret: str, *, ttl_secs: int = STATE_TTL_SECS,
+                 salt: str = "jarvis-google-connect"):
         if not secret:
             raise RuntimeError("ConnectStates needs a secret (JARVIS_SESSION_SECRET)")
-        self._serializer = URLSafeTimedSerializer(secret, salt="jarvis-google-connect")
+        # Each connect flow has its own salt, so a state from one can't be used in another.
+        self._serializer = URLSafeTimedSerializer(secret, salt=salt)
         self._ttl = ttl_secs
         self._issued: dict[str, tuple[str, float]] = {}  # nonce -> (user_id, issued at)
 

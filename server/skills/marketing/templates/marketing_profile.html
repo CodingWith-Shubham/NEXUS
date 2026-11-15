@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Marketing profile · JARVIS{% endblock %}
+{% block body %}
+<style>
+  label { display: block; font-weight: 600; margin: 16px 0 4px; }
+  .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+  textarea, input[type=text] { width: 100%; font: inherit; padding: 8px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+</style>
+<main class="wide">
+  <h1>Marketing profile</h1>
+  <p class="muted">How you write on LinkedIn. Drafts follow this, and only use facts from you or a cited source.</p>
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+  {% if not has_profile %}<div class="notice error">No profile yet: fill this in before drafting posts.</div>{% endif %}
+  <form method="post" action="/marketing/profile">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+    <label for="v">Voice and tone <span class="hint">How you sound: e.g. plain-spoken, warm, a little dry; first person.</span></label>
+    <textarea id="v" name="voice" rows="3">{{ form.voice or '' }}</textarea>
+
+    <label for="t">Topics <span class="hint">One per line.</span></label>
+    <textarea id="t" name="topics" rows="4">{{ form.topics or '' }}</textarea>
+
+    <label for="a">Audience <span class="hint">Who reads your posts.</span></label>
+    <input id="a" type="text" name="audience" value="{{ form.audience or '' }}">
+
+    <label for="n">Never say <span class="hint">One per line: phrases, claims or topics drafts must avoid.</span></label>
+    <textarea id="n" name="never_say" rows="4">{{ form.never_say or '' }}</textarea>
+
+    <label for="h">Hashtags <span class="hint">Your preference, e.g. "2-3 at the end; always #MyBrand".</span></label>
+    <input id="h" type="text" name="hashtags" value="{{ form.hashtags or '' }}">
+
+    <label for="s">Sample posts <span class="hint">3 to 5 of your own posts to imitate, separated by a line with just --- on it.</span></label>
+    <textarea id="s" name="sample_posts" rows="14">{{ form.sample_posts or '' }}</textarea>
+
+    <p style="margin-top:20px"><button type="submit">Save profile</button></p>
+  </form>
+</main>
+{% endblock %}

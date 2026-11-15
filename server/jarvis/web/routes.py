@@ -22,7 +22,7 @@ Connecting Gmail + Calendar (what JARVIS may do for you; separate from signing i
 """
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -86,6 +86,8 @@ class WebDeps:
     # The JARVIS core (registry, config), built on first use: the report pages run
     # send_email and the approval gate through it. None leaves those buttons off.
     core: Callable[[], Any] | None = None
+    # Extra /settings sections from skill packs: (template, async context(user, store)).
+    settings_sections: list = field(default_factory=list)
 
 
 @dataclass
@@ -107,14 +109,19 @@ class WebContext:
         loader = self.templates.env.loader
         self.templates.env.loader = ChoiceLoader([loader, FileSystemLoader(str(directory))])  # type: ignore[list-item]
 
+    def add_settings_section(self, template: str, context) -> None:
+        """A section on /settings: ``template`` rendered with ``await context(user, store)``."""
+        self.deps.settings_sections.append((template, context))
+
     def add_nav(self, href: str, label: str) -> None:
         """A link in the header of every signed-in page."""
         links = self.templates.env.globals.setdefault("pack_nav", [])
         if (href, label) not in links:
             links.append((href, label))
 
-    def page(self, request: Request, name: str, status: int = 200, **context) -> HTMLResponse:
-        return self.templates.TemplateResponse(request, name, context, status_code=status)
+    def page(self, request: Request, name: str, status_code: int = 200, **context) -> HTMLResponse:
+        # Named status_code (not status) so a template variable called "status" can't collide.
+        return self.templates.TemplateResponse(request, name, context, status_code=status_code)
 
     def message(self, request: Request, title: str, text: str, status: int = 200) -> HTMLResponse:
         return self.page(request, "message.html", status, title=title, text=text,
@@ -226,6 +233,12 @@ def register_routes(app: FastAPI, deps: WebDeps) -> None:
         except Exception as e:
             logger.warning(f"Could not read the Google connection for {user.id}: {e}")
             account = None
+        sections = []
+        for template, context in deps.settings_sections:
+            try:
+                sections.append((template, await context(user, await user_store(user.id))))
+            except Exception as e:
+                logger.warning(f"Settings section {template} failed: {e}")
         return page(
             request,
             "settings.html",
@@ -233,6 +246,8 @@ def register_routes(app: FastAPI, deps: WebDeps) -> None:
             account=account,
             configured=oauth.configured,
             notice=SETTINGS_NOTICES.get(notice, ""),
+            sections=sections,
+            section_notice=notice,
         )
 
     # Connecting Gmail + Calendar

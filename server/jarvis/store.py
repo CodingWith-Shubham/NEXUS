@@ -71,6 +71,8 @@ PACK_TABLES = (
     "lead_evidence",
     "contact_lookups",
     "lead_activity",
+    "marketing_profiles",
+    "linkedin_posts",
 )
 
 # The tables that belong to a user; each has a NOT NULL user_id (0003-0005 migrations).

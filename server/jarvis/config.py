@@ -58,6 +58,16 @@ class ResearchConfig:
 
 
 @dataclass(frozen=True)
+class LinkedInConfig:
+    """[linkedin] in jarvis.toml (skills/marketing)."""
+
+    provider: str = "official"  # "official" (LinkedIn's API) or "third_party" (not built)
+    api_version: str = "202610"  # Linkedin-Version header (YYYYMM); versions last about a year
+    redirect_uri: str = "http://localhost:7860/auth/linkedin/callback"
+    warn_days: int = 7  # warn this many days before the connection expires
+
+
+@dataclass(frozen=True)
 class SalesConfig:
     """[sales] and [contacts] in jarvis.toml (skills/sales)."""
 
@@ -104,6 +114,7 @@ class Config:
     session_hours: float = 168.0  # a sign-in lasts this long, then the user signs in again
     research: ResearchConfig = field(default_factory=ResearchConfig)
     sales: SalesConfig = field(default_factory=SalesConfig)
+    linkedin: LinkedInConfig = field(default_factory=LinkedInConfig)
 
     def tz(self) -> tzinfo | None:
         """The user's time zone, or None for the server's local zone."""
@@ -195,4 +206,11 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         session_hours=float(web.get("session_hours", 168)),
         research=_research_config(data.get("research", {})),
         sales=_sales_config(data.get("sales", {}), data.get("contacts", {})),
+        linkedin=LinkedInConfig(
+            provider=str(data.get("linkedin", {}).get("provider", "official")).strip().lower(),
+            api_version=str(data.get("linkedin", {}).get("api_version", "202610")).strip(),
+            redirect_uri=str(data.get("linkedin", {}).get(
+                "redirect_uri", "http://localhost:7860/auth/linkedin/callback")).strip(),
+            warn_days=int(data.get("linkedin", {}).get("warn_days", 7)),
+        ),
     )

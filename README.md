@@ -73,6 +73,18 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   note to copy; sending goes through `send_email` and the approval gate and marks the lead
   contacted. Scheduled sweeps (`scheduled_jobs`, run by the worker's scheduler) only find and
   save leads; they're announced at the next session.
+- **Marketing** (`server/skills/marketing/`, Phase 6): each user connects LinkedIn on `/settings`
+  (OAuth with `openid profile email w_member_social`; a connection, not a sign-in), and keeps a
+  marketing profile (voice, topics, audience, never-say list, hashtags, 3-5 sample posts) on
+  `/marketing/profile`. `draft_post` writes in their voice from a topic, a research report or a
+  lead's verified news; figures not in the source are removed and a source line is added when
+  needed. `create_post`, `comment_on_post`, `react_to_post` and `schedule_post` all go through
+  the approval gate with the exact final text; a scheduled post is published by the worker's
+  scheduler only if its text still matches what was approved. Comments and reactions become
+  draft-only if LinkedIn refuses them for the app (checked when connecting, or with
+  `scripts/linkedin_probe.py`). Every LinkedIn action is in `audit_log` with LinkedIn's response.
+  Drafts, scheduled and published posts are on `/content`. Uses LinkedIn's official versioned API
+  only (`[linkedin]` in `jarvis.toml`); nothing reads the feed or other people's posts.
 - **Accounts** (`server/jarvis/web/`, `server/jarvis/accounts.py`): invite-only sign-in with
   Google (openid, email, profile) on the bot's own server. `ALLOWED_EMAILS` is the invite list.
   The session is a signed, HttpOnly, SameSite=Lax cookie (Secure when `[web] public_url` is
@@ -83,7 +95,7 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `user_id` argument. The store is bound to one user and filters every query by `user_id`; the
   worker runs each task as its owner.
 - **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, `0002_assistant.sql`,
-  `0003_multi_user.sql`, `0004_research.sql`, then `0005_sales.sql`) create the tables. Run each once, in order, in the Supabase SQL
+  `0003_multi_user.sql`, `0004_research.sql`, `0005_sales.sql`, then `0006_marketing.sql`) create the tables. Run each once, in order, in the Supabase SQL
   editor. Then `uv run python scripts/check_store.py you@example.com` checks every store
   operation against Supabase as that user, and that another user can't see the rows.
 

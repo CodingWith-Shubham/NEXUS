@@ -1,0 +1,66 @@
+# Marketing profile (data only; edit here and re-run the seed script, or edit on /marketing/profile):
+#
+#   uv run python scripts/seed_marketing_profile.py you@example.com skills/marketing/tasc_marketing_profile.toml
+#
+# The sample posts are style examples written to match the sales profile. Replace them with
+# 3-5 of your own real LinkedIn posts when you can: drafts imitate their style, not content.
+
+voice = """First person, as a member of the TASC Outsourcing team. Professional, warm and practical.
+Plain English, short paragraphs, no hype or buzzwords. Speak from day-to-day experience of helping
+employers in Saudi Arabia hire, staff projects and scale their workforce. Share one useful point,
+then end with a light question or an offer to compare notes, never a hard sell."""
+
+topics = [
+    "Hiring and talent acquisition in Saudi Arabia",
+    "Workforce planning for expansion and new projects",
+    "Contract staffing and project mobilisation",
+    "Saudisation and local hiring",
+    "Outsourced workforce and payroll management",
+    "Onboarding and retention",
+]
+
+audience = "HR directors, talent acquisition heads, procurement and operations leaders at companies hiring or expanding in Saudi Arabia"
+
+never_say = [
+    "guaranteed results",
+    "best in class",
+    "number one",
+    "market leader",
+    "cheapest",
+    "lowest cost",
+    "client names the user hasn't given",
+    "statistics without a cited source",
+    "promises about visa or government approval timelines",
+    "competitors by name",
+    "politics or religion",
+]
+
+hashtags = "2-3 relevant hashtags at the end (for example #SaudiArabia #Hiring #WorkforcePlanning), always ending with #TASCOutsourcing"
+
+sample_posts = [
+"""When a company announces a new project in Saudi Arabia, the hiring plan usually comes second. It shouldn't. The roles you need in the first month are rarely the roles you need at peak, and the gap between them is where projects slip.
+
+If you're planning a mobilisation this year, map the workforce in phases before the first offer letter goes out. Happy to share how we approach it.
+
+#SaudiArabia #WorkforcePlanning #TASCOutsourcing""",
+
+"""A question I hear from HR leaders every week: should we hire permanently or bring in contract staff?
+
+My honest answer: it depends on how certain the work is. Contract staffing gives you room while a project proves itself; permanent hiring makes sense once demand is steady. Many teams do both, and that's fine.
+
+What's driving the decision in your team right now?
+
+#Hiring #ContractStaffing #TASCOutsourcing""",
+
+"""Onboarding is where good hires are won or lost. A strong candidate who spends their first week waiting for a laptop, an ID card or a clear manager is already reconsidering.
+
+Before your next hiring push, walk through day one from the new joiner's side. Small fixes there do more for retention than most perks.
+
+#TalentAcquisition #EmployeeExperience #TASCOutsourcing""",
+
+"""Expanding into Riyadh, Jeddah or the Eastern Province brings more than a new office. Local hiring, Saudisation targets and payroll set-up all land on the HR team at the same time.
+
+The companies that move fastest decide early which of those they'll run in-house and where they want a partner. If you're working through that list, I'm glad to compare notes.
+
+#SaudiArabia #Saudisation #TASCOutsourcing""",
+]

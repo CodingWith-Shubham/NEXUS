@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Content · JARVIS{% endblock %}
+{% macro local(value) %}{{ value | when }}{% endmacro %}
+{% block body %}
+<style>
+  textarea { width: 100%; font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .post { margin-bottom: 14px; }
+  .post pre { white-space: pre-wrap; font: inherit; margin: 8px 0; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  input[type=datetime-local] { font: inherit; padding: 7px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+</style>
+<main class="wide">
+  <div class="row">
+    <h1>Content</h1>
+    <span class="src-meta"><a href="/marketing/profile">Marketing profile</a> · <a href="/settings">LinkedIn: {{ 'connected' if li_status.connected and not li_status.expired else ('expired' if li_status.expired else 'not connected') }}</a></span>
+  </div>
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if not has_profile %}<p class="notice error">Set up your <a href="/marketing/profile">marketing profile</a> so drafts sound like you.</p>{% endif %}
+
+  {% if pending %}
+  <div class="card" style="margin-bottom:16px">
+    <p><strong>Approve this exact text?</strong></p>
+    <pre style="white-space:pre-wrap;font:inherit">{{ pending.summary }}</pre>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/confirm">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="next" value="/content">
+      <button type="submit">Yes, approve</button>
+    </form>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/cancel">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="next" value="/content">
+      <button class="secondary" type="submit">Cancel</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <h2>Scheduled</h2>
+  {% for p in scheduled %}
+    <div class="card post">
+      <p class="src-meta">Goes out {{ local(p.scheduled_at) }} · approved {{ local(p.approved_at) }}</p>
+      <pre>{{ p.text }}</pre>
+      <form method="post" action="/content/{{ p.id }}/unschedule" class="actions">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+        <button class="secondary" type="submit">Unschedule</button>
+        <span class="src-meta">To change the text, unschedule it, edit, and schedule again (new approval).</span>
+      </form>
+    </div>
+  {% else %}<p class="muted">Nothing scheduled.</p>{% endfor %}
+
+  <h2>Drafts</h2>
+  {% for p in drafts %}
+    <div class="card post">
+      <p class="src-meta">{{ p.kind }} · {{ local(p.created_at) }}{% if p.source.kind and p.source.kind not in ('direct', 'comment', 'reaction') %} · from {{ p.source.kind }}{% endif %}{% if p.target_url %} · on <a href="{{ p.target_url | safe_url or '#' }}" target="_blank" rel="noopener noreferrer nofollow">this post</a>{% endif %}</p>
+      {% if p.kind == 'post' %}
+      <form method="post" action="/content/{{ p.id }}/edit">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+        <textarea name="text" rows="7">{{ p.text }}</textarea>
+        <div class="actions"><button class="secondary" type="submit">Save edit</button></div>
+      </form>
+      <div class="actions">
+        <form class="inline" method="post" action="/content/{{ p.id }}/publish">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+          <button type="submit">Post now…</button>
+        </form>
+        <form class="inline" method="post" action="/content/{{ p.id }}/schedule">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+          <input type="datetime-local" name="when" required aria-label="Publish at">
+          <button class="secondary" type="submit">Schedule…</button>
+        </form>
+        <form class="inline" method="post" action="/content/{{ p.id }}/delete">
+          <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+          <button class="link" type="submit">Delete</button>
+        </form>
+      </div>
+      {% else %}
+      <pre id="copy-{{ p.id }}">{{ p.text }}</pre>
+      <p class="src-meta">LinkedIn doesn't let this app comment: copy this and paste it on the post yourself.</p>
+      <button class="link" type="button" onclick="navigator.clipboard && navigator.clipboard.writeText(document.getElementById('copy-{{ p.id }}').innerText); this.textContent='Copied'">Copy comment</button>
+      {% endif %}
+    </div>
+  {% else %}<p class="muted">No drafts. Ask JARVIS: "Draft a LinkedIn post about…"</p>{% endfor %}
+
+  <h2>Published</h2>
+  <ul>
+  {% for p in published %}
+    {% set link = p.linkedin_url | safe_url %}
+    <li>{{ p.kind }}{% if p.kind == 'reaction' %} ({{ reaction_labels.get(p.reaction_type, p.reaction_type) }}){% endif %} · {{ local(p.published_at) }} ·
+      {% if link %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">open on LinkedIn</a>{% endif %}
+      <div class="src-meta">{{ (p.text or '')[:160] }}{% if (p.text or '') | length > 160 %}…{% endif %}</div></li>
+  {% else %}<li class="muted">Nothing published yet.</li>{% endfor %}
+  </ul>
+
+  {% if failed %}
+  <h2>Not published</h2>
+  <ul>
+  {% for p in failed %}
+    <li>{{ p.kind }} · {{ local(p.updated_at) }}: <span class="src-meta">{{ p.error or 'in progress' }}</span>
+      <div class="src-meta">{{ (p.text or '')[:160] }}</div></li>
+  {% endfor %}
+  </ul>
+  {% endif %}
+</main>
+{% endblock %}

@@ -23,6 +23,9 @@
       {% endif %}
     {% endif %}
   </div>
+  {% for template, ctx in sections %}
+    {% with section=ctx %}{% include template %}{% endwith %}
+  {% endfor %}
   <p class="muted" style="margin-top:16px;font-size:13px">Signed in as {{ user.email }}.</p>
 </main>
 {% endblock %}

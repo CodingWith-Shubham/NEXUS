@@ -1,0 +1,44 @@
+{# A /settings section. `section` = {"status": LinkedInConnection.status()}. #}
+{% set st = section.status %}
+<div class="card" style="margin-top:16px">
+  <h1>LinkedIn</h1>
+  {% if linkedin_notices.get(section_notice) %}<div class="notice">{{ linkedin_notices.get(section_notice) }}</div>{% endif %}
+  {% if st.connected and not st.expired %}
+    <p>Connected as <strong>{{ st.name }}</strong>. JARVIS can publish posts for you, always after you approve the exact text.</p>
+    {% if st.warn %}<p class="notice error">The connection expires in {{ st.days_left }} day{{ '' if st.days_left == 1 else 's' }}. Reconnect to keep scheduled posts going.</p>
+    {% else %}<p class="src-meta">Valid until {{ st.expires_at | when }} (LinkedIn connections last 60 days).</p>{% endif %}
+    <p class="src-meta">
+      Comments: {{ {'ok': 'allowed', 'denied': 'not allowed for this app (draft only, copy and paste)'}.get(st.capabilities.comment, 'not checked yet') }} ·
+      Reactions: {{ {'ok': 'allowed', 'denied': 'not allowed for this app (react yourself)'}.get(st.capabilities.react, 'not checked yet') }}
+    </p>
+    <form class="inline" method="post" action="/settings/linkedin/connect">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button class="secondary" type="submit">Reconnect</button>
+    </form>
+    <form class="inline" method="post" action="/settings/linkedin/probe">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button class="secondary" type="submit">Re-test permissions</button>
+    </form>
+    <form class="inline" method="post" action="/settings/linkedin/disconnect">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button class="danger" type="submit">Disconnect</button>
+    </form>
+  {% elif st.connected and st.expired %}
+    <p class="notice error">Your LinkedIn connection has expired. Reconnect to post again; scheduled posts are skipped until you do.</p>
+    <form method="post" action="/settings/linkedin/connect">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button type="submit">Reconnect LinkedIn</button>
+    </form>
+  {% else %}
+    <p>Not connected. Connect LinkedIn so JARVIS can publish posts you approve. This is a connection for posting, not a way to sign in.</p>
+    {% if st.configured %}
+    <form method="post" action="/settings/linkedin/connect">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button type="submit">Connect LinkedIn</button>
+    </form>
+    {% else %}
+    <p class="notice error">LinkedIn isn't set up on the server: add LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET to server/.env.</p>
+    {% endif %}
+  {% endif %}
+  <p class="src-meta" style="margin-top:12px">LinkedIn's API doesn't let apps read your feed or other people's posts, send messages or connection requests, so JARVIS never does.</p>
+</div>

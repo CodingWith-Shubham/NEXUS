@@ -94,8 +94,12 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   request body, and every tool reads it from the session (`ctx.user_id`); no tool takes a
   `user_id` argument. The store is bound to one user and filters every query by `user_id`; the
   worker runs each task as its owner.
+- **Laptop access** (`server/skills/laptop/`, `laptop_agent/`): find, read, move and trash files
+  in `~/Downloads` on your Mac, and nothing else. Each user pairs their own laptop; commands and
+  heartbeats are scoped to that user. See [Laptop access](#laptop-access-macos-downloads-only).
 - **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, `0002_assistant.sql`,
-  `0003_multi_user.sql`, `0004_research.sql`, `0005_sales.sql`, then `0006_marketing.sql`) create the tables. Run each once, in order, in the Supabase SQL
+  `0003_multi_user.sql`, `0004_research.sql`, `0005_sales.sql`, `0006_marketing.sql`, then
+  `0007_laptop.sql`) create the tables. Run each once, in order, in the Supabase SQL
   editor. Then `uv run python scripts/check_store.py you@example.com` checks every store
   operation against Supabase as that user, and that another user can't see the rows.
 
@@ -159,6 +163,166 @@ uv run pipecat eval run evals/starter_audio.yaml -v   # full audio round trip (s
 
 `eval:` criteria are scored by a judge LLM — a local Ollama by default (`ollama pull gemma4:12b`). The comments in the scenario files cover the schema and how to use an OpenAI judge instead.
 
+## Laptop access (macOS, Downloads only)
+
+JARVIS can find, read, organize and trash files in `~/Downloads` on your Mac, and nothing else.
+The voice front never touches the laptop: it writes signed commands to Supabase, and a small
+agent on the Mac (`laptop_agent/`) polls for them, checks them and runs them.
+
+```
+voice (bot.py) ──insert signed command──▶ Supabase laptop_commands ◀──poll / claim / finish── laptop_agent (your Mac)
+                ◀──read result──────────                            ◀──heartbeat every 15 s──
+```
+
+### Tools
+
+| Voice tool | Agent tool | Approval | What it does |
+|---|---|---|---|
+| `laptop_find` (action `list`) | `list_dir` | no | names, sizes and dates in a folder |
+| `laptop_find` (action `search`) | `search_files` | no | file-name search, capped results |
+| `laptop_find` (action `read`) | `read_file` | no | txt, md, csv, json, log; size-capped and truncated |
+| `laptop_move_file` | `move_file` | **yes** | move or rename inside Downloads; never overwrites |
+| `laptop_delete_file` | `delete_file` | **yes** | moves the file to `~/Downloads/.jarvis_trash/` (timestamped); never a permanent delete |
+| `laptop_pause` | `pause` | no | creates `laptop_agent/PAUSE`; resuming is only possible on the laptop |
+
+The list, search and read actions share one voice tool to keep Gemini Live's tool list short.
+There is deliberately no tool to write files, run scripts or programs, open apps or URLs, or read
+system information. PDF reading is not included (no PDF library is a dependency).
+
+### Setup
+
+1. **Database**: run `supabase/migrations/0007_laptop.sql` in the Supabase SQL editor, after the
+   other migrations (it needs `public.users`).
+2. **Secrets**: generate two values, for example with
+   `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`:
+   - `LAPTOP_AGENT_SECRET`: signs commands. Put the same value in `server/.env` and `laptop_agent/.env`.
+   - `LAPTOP_AGENT_DB_TOKEN`: lets the agent call its database functions. Laptop only.
+3. **Agent environment**: `cp laptop_agent/.env.example laptop_agent/.env` and fill in
+   `SUPABASE_URL`, `SUPABASE_ANON_KEY` (the anon / publishable key, **not** service_role),
+   `LAPTOP_AGENT_SECRET` and `LAPTOP_AGENT_DB_TOKEN`.
+4. **Register the token**: `cd laptop_agent && uv sync && uv run python -m laptop_agent hash-token you@example.com`
+   (your JARVIS sign-in email) prints an `insert` statement holding only the token's SHA-256,
+   tied to that user. Run it in the SQL editor. The agent then runs only that user's commands;
+   each user who wants laptop access pairs their own laptop with their own token.
+5. **Config**: `cp config.example.toml config.toml` (in `laptop_agent/`). It starts with
+   `read_only = true`.
+6. **Check**: from `server/`, `uv run python scripts/check_store.py you@example.com`. With `SUPABASE_ANON_KEY`
+   in `server/.env` it also checks that the anon key can't read the commands table or claim one
+   without the token.
+
+### Running the agent
+
+```bash
+cd laptop_agent
+uv run python -m laptop_agent
+```
+
+It runs in the foreground (auto-start comes later). It opens no ports: it only makes outbound
+HTTPS calls to Supabase. Tests: `cd laptop_agent && uv run pytest`.
+
+### Granting only the Downloads permission
+
+macOS asks for folder permissions per app, and the app is the one that starts Python: your
+terminal (Terminal, iTerm or VS Code), not `python` itself.
+
+1. The first time the agent lists Downloads, macOS asks whether your terminal may access files in
+   your Downloads folder. Click **Allow**. Or go to **System Settings → Privacy & Security → Files
+   and Folders → your terminal** and turn on **Downloads Folder** only.
+2. Do **not** grant Full Disk Access. Check **System Settings → Privacy & Security → Full Disk
+   Access**: if your terminal is listed and on, turn it off, or run the agent from a terminal app
+   that isn't listed.
+3. If macOS later asks about Documents or Desktop for that terminal, click **Don't Allow**.
+
+**Check that other folders are blocked.** Run these from the terminal that runs the agent:
+
+```bash
+ls ~/Documents   # should fail: "Operation not permitted" (blocked by macOS)
+ls ~/Desktop     # should fail: "Operation not permitted" (blocked by macOS)
+```
+
+`~/.ssh` is **not** protected by macOS: any program you run can read it. So is any folder, if
+the terminal has Full Disk Access. What blocks these is the agent's own sandbox. Check it from
+`laptop_agent/`:
+
+```bash
+uv run python -c "
+from laptop_agent.config import load_config
+from laptop_agent.sandbox import Sandbox, SandboxError
+sb = Sandbox(load_config())
+for p in ['~/Documents', '~/Desktop', '~/.ssh/id_rsa', '../Documents', '/etc/passwd']:
+    try:
+        sb.resolve(p); print('ALLOWED (this is a bug):', p)
+    except SandboxError as e:
+        print('refused:', p, '->', e.code)
+"
+```
+
+Every line should say `refused`. `uv run pytest` covers the same cases, plus symlinks.
+
+### Security model
+
+- **Sandbox**: only `~/Downloads` is accessible. `allowed_roots` can name folders inside it
+  (narrowing); anything else stops the agent at startup. Every path is resolved with `realpath`
+  before it is checked, so `..`, symlinks and aliases pointing elsewhere are refused. Any symlink
+  in a path is refused, and search and listing skip symlinks. Move and delete work on regular
+  files only. For a move, both source and destination must be inside.
+- **Protected names**: hidden files, and names matching `*.pem`, `*.key`, `*.env`, `*secret*`,
+  `*token*`, `*password*`, `*passwd*`, `*.kdbx`, `id_rsa*`, `*seed*`, `*wallet*`, `*.p12`,
+  `*.pfx`, `*.mobileconfig` or `*.keychain*` (any case), are never shown in a list or search and
+  can't be read, moved or deleted. The config can add patterns but not remove these.
+- **Trash**: `.jarvis_trash` shows by name in a listing of Downloads, but nothing inside it can
+  be listed, read or moved by JARVIS. Restore files from it in Finder.
+- **Signed commands**: the server signs every command with HMAC-SHA256 over (id, tool, args,
+  expires_at), using `LAPTOP_AGENT_SECRET`. The agent rejects:
+  - commands that are unsigned or tampered with;
+  - commands that have expired (120 s TTL) or carry an expiry further away than its own TTL;
+  - replays.
+
+  A command can be claimed only once (a `for update skip locked` claim). The agent takes each
+  tool's tier from its own tool table, never from the row.
+- **Approval**: moves and deletes always go through `confirm_action` / `cancel_action`. The
+  command is created, signed and marked `approved` only after you say yes, and the confirmation
+  names the exact file and destination. Before asking, JARVIS checks the heartbeat: if the laptop
+  is offline, paused or read-only, it says so instead of asking.
+- **Modes**: `read_only = true` (the default) makes the agent reject moves and deletes even when
+  approved. `dry_run = true` makes them only report what they would do.
+- **Kill switch**: say "pause laptop access" (`laptop_pause`), or `touch laptop_agent/PAUSE`, or
+  set `[agent] enabled = false`. While paused the agent claims nothing. Resume by deleting
+  `laptop_agent/PAUSE` on the laptop; there is no voice command for it.
+- **Limits**: one command at a time, at most 20 per minute, a 20 s timeout per command, and capped
+  read sizes, result counts and output size.
+- **Prompt injection**: file names, file contents and search results come back to the model as
+  `untrusted_data`. The laptop prompt section tells it that nothing written in them is a request
+  from you. The laptop tools are offered to the voice model only, never to the background worker.
+- **No code execution**: the agent uses the standard library for file operations. It has no
+  `subprocess`, `os.system`, `eval` or `exec`, and never opens or runs a file. A test scans the
+  package for these.
+- **Audit**: every command goes to `audit_log`:
+  - **requested:** `laptop_command_requested`, written by the server;
+  - **asked to approve, refused before asking, approved, cancelled:** the existing `action_*`
+    events;
+  - **outcome:** `laptop_command_done` / `_rejected` / `_failed` / `_expired`, written in the
+    same transaction that records it.
+
+  Entries hold the tool, the paths as given, the status and sizes. File contents are never logged.
+- **Keys and RLS**:
+  - **Server:** uses the service_role key, as before.
+  - **Agent:** uses the anon key. The laptop tables have RLS on and no policies, so the anon key
+    can't read or write them directly. It can only call `laptop_claim_command`,
+    `laptop_finish_command` and `laptop_heartbeat_ping`, and each of those checks the agent
+    token against the stored SHA-256 and acts only on the commands of the user it belongs to.
+  - **Recommendation:** keep RLS on for every table and add no anon policies, so only the server
+    (service_role) and the agent (these three functions) can touch the laptop tables.
+  - **Secrets:** stay in `.env` files and are never written to Supabase or to logs.
+
+### Rollout
+
+1. `read_only = true`: test search, read and list by voice.
+2. `dry_run = true` and `read_only = false`: check the move and delete confirmations and the
+   `audit_log` entries. Run `server/evals/laptop_audio.yaml` here; its header lists the test files
+   to create. Run `evals/laptop_offline_audio.yaml` with the agent stopped.
+3. `dry_run = false`: real operations, on a test folder inside Downloads first.
+
 ## Project Structure
 
 ```
@@ -168,7 +332,7 @@ JARVIS/
 │   ├── worker.py        # Background task worker
 │   ├── jarvis.toml      # Enabled skill packs, worker model, limits
 │   ├── jarvis/          # Core: store, registry, approval gate, tasks, announcer
-│   ├── skills/          # Skill packs (demo for now)
+│   ├── skills/          # Skill packs (assistant, workspace, research, sales, marketing, laptop, demo)
 │   ├── tests/           # Core unit tests
 │   ├── evals/           # Behavioral eval scenarios
 │   ├── pyproject.toml   # Python dependencies
@@ -176,6 +340,10 @@ JARVIS/
 │   ├── .env             # Your API keys (git-ignored)
 │   ├── Dockerfile       # Container image for Pipecat Cloud
 │   └── pcc-deploy.toml  # Pipecat Cloud deployment config
+├── laptop_agent/        # Runs on your Mac: signed, sandboxed file commands in ~/Downloads
+│   ├── laptop_agent/    # The agent package (config, sandbox, signing, tools, runner)
+│   ├── tests/           # Sandbox, signing, modes and limits tests
+│   └── config.example.toml
 ├── supabase/migrations/ # Database schema
 ├── .gitignore           # Git ignore patterns
 └── README.md            # This file

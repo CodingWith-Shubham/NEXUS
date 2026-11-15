@@ -253,4 +253,7 @@ if __name__ == "__main__":
     # Sign-in, settings and the gate in front of every runner route (jarvis.web).
     # Installed before main() adds the runner's routes, so the gate wraps them all.
     install_web(app, web_deps_from_env(load_config(), database))
+    from jarvis.ui import install_voice_only_ui
+
+    install_voice_only_ui()
     main()

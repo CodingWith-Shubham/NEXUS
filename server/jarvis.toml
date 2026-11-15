@@ -12,7 +12,8 @@ languages = ["en-IN", "hi-IN"]
 # its tools and prompt section; the core never imports a pack directly.
 # "demo" (Phase 1 test tools) is left out to keep the voice tool list short;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant", "workspace", "research", "sales", "marketing"]
+# "laptop": ~/Downloads on the user's Mac, through laptop_agent/ (see README).
+enabled = ["assistant", "workspace", "research", "sales", "marketing", "laptop"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
@@ -24,7 +25,8 @@ enabled = ["assistant", "workspace", "research", "sales", "marketing"]
 # aren't using, or move rare tools to worker-only.
 # + 6 marketing (draft_post, create_post, comment_on_post, react_to_post, schedule_post,
 # manage_scheduled_posts).
-max_tools = 29
+# + 4 laptop (laptop_find, laptop_move_file, laptop_delete_file, laptop_pause).
+max_tools = 33
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live

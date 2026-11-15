@@ -102,10 +102,23 @@ class ToolRegistry:
 
         try:
             needs_approval = not approved and await _needs_approval(spec, ctx, args)
-            summary = await _summarize(spec, ctx, args) if needs_approval else ""
+            # A precheck answers instead of parking the action when it can't run anyway
+            # (not allowed, offline, ...), so the user is never asked to approve it.
+            refusal = (
+                await spec.precheck(ctx, args)
+                if needs_approval and spec.precheck is not None
+                else None
+            )
+            if refusal is None and needs_approval:
+                summary = await _summarize(spec, ctx, args)
         except Exception as e:
             logger.exception(f"Approval check for {name} failed")
             return {"error": f"{name} failed: {e}"}
+        if refusal is not None:
+            await ctx.store.audit(
+                "action_refused", detail={"args": args, "refusal": refusal}, **audit
+            )
+            return refusal
         if needs_approval:
             action = await ctx.store.create_action(
                 tool=name,

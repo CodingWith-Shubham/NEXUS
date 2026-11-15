@@ -87,6 +87,8 @@ USER_TABLES = (
     "pending_actions",
     "audit_log",
     "oauth_tokens",
+    "laptop_commands",
+    "laptop_heartbeat",
 )
 
 # A fixed user for tests that don't care who the user is.
@@ -185,6 +187,11 @@ class Store(Protocol):
     async def get_oauth_token(self, provider: str) -> Row | None: ...
     async def save_oauth_token(self, provider: str, account: str, fields: dict) -> Row: ...
     async def delete_oauth_token(self, provider: str) -> None: ...
+
+    # laptop agent (supabase/migrations/0007_laptop.sql)
+    async def create_laptop_command(self, command: Row) -> Row: ...
+    async def get_laptop_command(self, command_id: str) -> Row | None: ...
+    async def laptop_heartbeat(self) -> Row | None: ...
 
     # research reports
     async def create_report(self, topic: str, depth: str) -> Row:
@@ -713,6 +720,24 @@ class SupabaseStore:
             return
         await self._filtered(self._delete(_pack_table(table)), where).execute()
 
+    # laptop agent (0007_laptop.sql): the server only inserts signed commands for this
+    # user's laptop and reads them back. The agent claims and finishes them through RPCs
+    # (anon key + its token, which is tied to one user).
+
+    async def create_laptop_command(self, command: Row) -> Row:
+        res = await self._insert("laptop_commands", command).execute()
+        return res.data[0]
+
+    async def get_laptop_command(self, command_id: str) -> Row | None:
+        if not _is_uuid(command_id):
+            return None
+        res = await self._select("laptop_commands").eq("id", command_id).limit(1).execute()
+        return res.data[0] if res.data else None
+
+    async def laptop_heartbeat(self) -> Row | None:
+        res = await self._select("laptop_heartbeat").limit(1).execute()
+        return res.data[0] if res.data else None
+
 
 def _escape_like(text: str) -> str:
     """Make user text match literally in a LIKE/ILIKE pattern."""
@@ -741,6 +766,8 @@ class MemoryDatabase:
         self.users: dict[str, Row] = {}
         self.reports: dict[str, Row] = {}
         self.tables: dict[str, list[Row]] = {t: [] for t in PACK_TABLES}
+        self.laptop_commands: dict[str, Row] = {}
+        self.laptop_heartbeats: dict[str, Row] = {}  # user_id -> that user's laptop heartbeat
         self._seq = itertools.count()
 
     def stamp(self) -> str:
@@ -874,6 +901,22 @@ class MemoryStore:
         return {
             (p, r["account"]): r for (u, p), r in self.db.oauth.items() if u == self.user_id
         }
+
+    @property
+    def laptop_commands(self) -> dict[str, Row]:
+        return {k: r for k, r in self.db.laptop_commands.items() if r["user_id"] == self.user_id}
+
+    @property
+    def laptop_heartbeat_row(self) -> Row | None:
+        """This user's laptop heartbeat; tests set it to play an online agent."""
+        return self.db.laptop_heartbeats.get(self.user_id)
+
+    @laptop_heartbeat_row.setter
+    def laptop_heartbeat_row(self, row: Row | None) -> None:
+        if row is None:
+            self.db.laptop_heartbeats.pop(self.user_id, None)
+        else:
+            self.db.laptop_heartbeats[self.user_id] = {**row, "user_id": self.user_id}
 
     def _stamp(self) -> str:
         return self.db.stamp()
@@ -1256,6 +1299,29 @@ class MemoryStore:
             raise ValueError("delete needs a where filter")
         rows = self.db.tables[_pack_table(table)]
         rows[:] = [r for r in rows if not self._match(r, where, None, None, None)]
+
+    # laptop agent
+
+    async def create_laptop_command(self, command: Row) -> Row:
+        row = {
+            "result": None,
+            "error": None,
+            "created_at": self._stamp(),
+            "claimed_at": None,
+            "finished_at": None,
+            **command,
+            "user_id": self.user_id,
+        }
+        self.db.laptop_commands[row["id"]] = row
+        return dict(row)
+
+    async def get_laptop_command(self, command_id: str) -> Row | None:
+        row = self._owned(self.db.laptop_commands, command_id)
+        return dict(row) if row else None
+
+    async def laptop_heartbeat(self) -> Row | None:
+        row = self.laptop_heartbeat_row
+        return dict(row) if row else None
 
 
 def _as_dt(value) -> datetime:

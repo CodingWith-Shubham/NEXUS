@@ -305,6 +305,9 @@ async def test_every_supabase_store_query_is_scoped_to_the_user():
         "insert": ("leads", {"company_name": "X", "user_id": "evil"}),
         "update": ("leads", {"status": "approved", "user_id": "evil"}),
         "delete": ("lead_activity",),
+        "create_laptop_command": ({"id": some_id, "tool": "list_dir", "user_id": "evil"},),
+        "get_laptop_command": (some_id,),
+        "laptop_heartbeat": (),
     }
     public = {n for n in dir(SupabaseStore) if not n.startswith("_") and callable(getattr(store, n))}
     assert public == set(calls), "add new store methods to this test"

@@ -51,6 +51,23 @@
   .error { background: var(--err-bg); color: var(--danger); }
   .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
   code { font-size: 13px; }
+  main.wide { max-width: 52rem; margin: 32px auto 64px; padding: 0 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .pill { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+  .pill.done { color: var(--ok-text); background: var(--ok-bg); border-color: transparent; }
+  .pill.failed, .pill.cancelled { color: var(--danger); background: var(--err-bg); border-color: transparent; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0 4px; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  article h2 { font-size: 17px; margin: 28px 0 8px; }
+  article ul { padding-left: 20px; margin: 0 0 8px; }
+  article li { margin-bottom: 6px; }
+  sup a { text-decoration: none; font-size: 11px; margin-left: 1px; }
+  ol.sources li { margin-bottom: 8px; word-break: break-word; }
+  .src-meta { color: var(--muted); font-size: 13px; }
+  li:target { background: var(--ok-bg); border-radius: 4px; }
+  @media (max-width: 560px) { th:nth-child(2), td:nth-child(2) { display: none; } }
 </style>
 </head>
 <body>
@@ -59,6 +76,7 @@
   <a class="brand" href="/">JARVIS</a>
   <nav>
     <span class="who">{{ user.email }}</span>
+    <a href="/reports">Reports</a>
     <a href="/settings">Settings</a>
     <form class="inline" method="post" action="/logout">
       <input type="hidden" name="csrf_token" value="{{ user.csrf }}">

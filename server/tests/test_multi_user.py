@@ -293,6 +293,13 @@ async def test_every_supabase_store_query_is_scoped_to_the_user():
         "get_oauth_token": ("google",),
         "save_oauth_token": ("google", "me@gmail.com", {"access_token": "enc", "user_id": "evil"}),
         "delete_oauth_token": ("google",),
+        "create_report": ("topic", "quick"),
+        "get_report": (some_id,),
+        "list_reports": (),
+        "active_report": (),
+        "latest_report": ("done",),
+        "update_report": (some_id, {"progress": 5, "user_id": "evil"}, ),
+        "reports_finished_since": ("2026-01-01T00:00:00+00:00",),
     }
     public = {n for n in dir(SupabaseStore) if not n.startswith("_") and callable(getattr(store, n))}
     assert public == set(calls), "add new store methods to this test"
@@ -440,7 +447,7 @@ class Web:
     """A test server: our web layer plus the runner's real /start and look-alike offer routes."""
 
     def __init__(self, *, public_url="http://localhost:7860", eval_user_email=None,
-                 login=None, google_account="alice.mail@gmail.com"):
+                 login=None, google_account="alice.mail@gmail.com", core=None):
         self.db = MemoryDatabase()
         self.started: list[dict] = []  # bots started: who they ran as, what the body said
         self.key = Fernet.generate_key().decode()
@@ -465,7 +472,8 @@ class Web:
 
         self.deps = WebDeps(settings=self.settings, database=database,
                             login=login if login is not None else FakeLogin(),
-                            connect_states=ConnectStates(SECRET), google_oauth=google_oauth)
+                            connect_states=ConnectStates(SECRET), google_oauth=google_oauth,
+                            core=(lambda: core) if core is not None else None)
         self.app = FastAPI()
         install_web(self.app, self.deps)
         self._runner_routes()

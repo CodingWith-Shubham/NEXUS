@@ -10,6 +10,9 @@ One worker serves every user. It claims the oldest queued task of anyone
 (:meth:`Database.claim_next_task`), then runs it entirely through the task
 owner's store (``database.for_user(task["user_id"])``): the tools, the result,
 the audit entries and any approval it raises all belong to that user.
+
+A task with a ``kind`` other than "general" (e.g. "research") is run by the
+skill pack that registered a handler for that kind, not by the tool loop.
 """
 
 import asyncio
@@ -24,7 +27,8 @@ from loguru import logger
 from jarvis.config import Config
 from jarvis.llm import ChatModel
 from jarvis.registry import ToolRegistry
-from jarvis.skills import ToolContext
+from jarvis.search_providers import SearchProvider
+from jarvis.skills import TaskCancelled, ToolContext
 from jarvis.store import Database, Row
 
 
@@ -44,8 +48,10 @@ class TaskWorker:
         max_steps: int = 8,
         timezone: tzinfo | None = None,
         config: Config | None = None,
+        search: SearchProvider | None = None,
     ):
         self._db = database
+        self._search = search
         self._registry = registry
         self._llm = llm
         self._system_instruction = system_instruction
@@ -86,7 +92,13 @@ class TaskWorker:
             task_id=task["id"],
             timezone=self._timezone,
             config=self._config,
+            llm=self._llm,
+            search=self._search,
         )
+        kind = task.get("kind") or "general"
+        if kind != "general":
+            await self._run_handler(kind, task, ctx)
+            return
         now = datetime.now(self._timezone) if self._timezone else datetime.now().astimezone()
         request = (
             f"Current date and time: {now.strftime('%A %d %B %Y, %I:%M %p %Z')}.\n\n"
@@ -102,6 +114,29 @@ class TaskWorker:
         await store.finish_task(task["id"], "done", result=result)
         await store.audit("task_done", task_id=task["id"])
         logger.info(f"Task {task['id']} done ({len(result)} chars)")
+
+    async def _run_handler(self, kind: str, task: Row, ctx: ToolContext) -> None:
+        store = ctx.store
+        handler = self._registry.task_handler(kind)
+        try:
+            if handler is None:
+                raise RuntimeError(f"no loaded skill pack runs {kind!r} tasks")
+            result = await handler(task, ctx)
+        except TaskCancelled:
+            logger.info(f"Task {task['id']} ({kind}) cancelled")
+            await store.finish_task(task["id"], "cancelled")
+            await store.audit("task_cancelled", task_id=task["id"])
+            return
+        except Exception as e:
+            # Handlers raise with a message for the user; the traceback is only for debugging.
+            logger.warning(f"Task {task['id']} ({kind}) failed: {e}")
+            logger.opt(exception=e).debug("Traceback")
+            await store.finish_task(task["id"], "failed", error=str(e))
+            await store.audit("task_failed", detail={"error": str(e)}, task_id=task["id"])
+            return
+        await store.finish_task(task["id"], "done", result=result)
+        await store.audit("task_done", task_id=task["id"])
+        logger.info(f"Task {task['id']} ({kind}) done")
 
     async def _solve(self, request: str, ctx: ToolContext) -> str:
         tools = self._registry.worker_tools()

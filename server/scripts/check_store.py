@@ -97,6 +97,29 @@ async def main() -> int:
         lambda rows: rows and rows[0]["summary"] == f"{tag} summary",
     )
 
+    # Phase 4: research reports (needs 0004_research.sql)
+    report = await check(
+        "create_report", store.create_report(f"{tag} report", "quick"), lambda r: r["id"]
+    )
+    await check(
+        "update_report",
+        store.update_report(report["id"], {"status": "running", "progress": 10},
+                            only_if_status=("queued",)),
+        lambda r: r and r["progress"] == 10,
+    )
+    await check("active_report", store.active_report(), lambda r: r and r["id"] == report["id"])
+    await check("list_reports", store.list_reports(5),
+                lambda rows: any(r["id"] == report["id"] for r in rows))
+    await check(
+        "task kind and params",
+        store.create_task(f"{tag} research", "check", kind="research",
+                          params={"report_id": report["id"]}),
+        lambda r: r["kind"] == "research" and r["params"]["report_id"] == report["id"],
+    )
+    await check("other user: get_report", stranger.get_report(report["id"]), lambda r: r is None)
+    await check("other user: list_reports", stranger.list_reports(), lambda rows: rows == [])
+    await store.update_report(report["id"], {"status": "cancelled"})
+
     # Scoping: another user sees none of it.
     await check("other user: get_task", stranger.get_task(task["id"]), lambda r: r is None)
     await check("other user: get_action", stranger.get_action(action["id"]), lambda r: r is None)
@@ -115,6 +138,7 @@ async def main() -> int:
         ("notes", "content"),
         ("reminders", "text"),
         ("session_summaries", "summary"),
+        ("reports", "topic"),
     ]:
         try:
             await (

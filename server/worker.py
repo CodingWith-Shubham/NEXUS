@@ -31,6 +31,7 @@ async def main() -> None:
         max_steps=core.config.worker_max_steps,
         timezone=core.config.tz(),
         config=core.config,
+        search=core.search,
     )
     await worker.run_forever()
 

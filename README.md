@@ -45,6 +45,19 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `draft_email`, `send_email`, `reply_to_email`) runs in the worker through `delegate_task`.
   Sending, replying, and meeting changes that involve other people need approval. Email content
   is marked untrusted and is never followed as instructions.
+- **Deep research** (`server/skills/research/`, Phase 4): `start_research(topic, depth)`
+  queues a worker job that plans 3-6 sub-questions, searches each with the `[search]`
+  provider, reads the best pages in full (skipping failed and paywalled ones, and never
+  fetching private or internal addresses), extracts findings that must quote the page they
+  came from, and writes a cited report: summary, a section per sub-question, disagreements,
+  "what I couldn't confirm" and a source list. Reports are saved per user in `reports` and
+  shown at `/reports`; JARVIS announces each one with a short spoken summary and the browser
+  shows a link. Voice also gets `get_research_status`, `cancel_research` and `ask_report`
+  (answers from a saved report without searching again). Limits per depth (searches, pages,
+  time) are in `[research.*]` in `jarvis.toml`; one job per user at a time. If search or the
+  worker model is down the job fails with a clear message instead of writing from memory.
+  `uv run python scripts/research.py you@example.com "topic" --depth quick` runs one live job
+  without the worker.
 - **Accounts** (`server/jarvis/web/`, `server/jarvis/accounts.py`): invite-only sign-in with
   Google (openid, email, profile) on the bot's own server. `ALLOWED_EMAILS` is the invite list.
   The session is a signed, HttpOnly, SameSite=Lax cookie (Secure when `[web] public_url` is
@@ -55,7 +68,7 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `user_id` argument. The store is bound to one user and filters every query by `user_id`; the
   worker runs each task as its owner.
 - **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, `0002_assistant.sql`,
-  then `0003_multi_user.sql`) create the tables. Run each once, in order, in the Supabase SQL
+  `0003_multi_user.sql`, then `0004_research.sql`) create the tables. Run each once, in order, in the Supabase SQL
   editor. Then `uv run python scripts/check_store.py you@example.com` checks every store
   operation against Supabase as that user, and that another user can't see the rows.
 

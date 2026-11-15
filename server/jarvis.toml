@@ -12,13 +12,14 @@ languages = ["en-IN", "hi-IN"]
 # its tools and prompt section; the core never imports a pack directly.
 # "demo" (Phase 1 test tools) is left out to keep the voice tool list short;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant", "workspace"]
+enabled = ["assistant", "workspace", "research"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
-# 4 core + 6 assistant + 2 workspace reads (list_events, search_email), plus web_search
+# 4 core + 6 assistant + 2 workspace reads (list_events, search_email) + 4 research
+# (start_research, get_research_status, cancel_research, ask_report), plus web_search
 # while web_search = "tool". All other calendar/email tools are worker-only.
-max_tools = 13
+max_tools = 17
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live
@@ -93,3 +94,36 @@ api_key_env = "GOOGLE_API_KEY"
 public_url = "http://localhost:7860"
 # How long a sign-in lasts before the user must sign in again.
 session_hours = 168
+
+[research]
+# Deep research (skills/research): a worker job that plans sub-questions, searches with
+# the [search] provider, reads the best pages in full, and writes a cited report.
+# Search results considered per sub-question, and the most pages read for any one of them.
+results_per_search = 5
+pages_per_question = 3
+# Text kept from each page for the model, and page text sent per extraction call (each
+# call is one worker-model request: free OpenRouter models allow 20 a minute, 50 a day).
+page_chars = 8000
+extract_batch_chars = 24000
+fetch_timeout_secs = 15
+
+# Limits per depth. When one is reached the job stops gathering, writes up what it found,
+# and says which limit was hit. The time budget covers planning, searching, reading and
+# extracting; writing the report comes after it. Failed page fetches count as pages.
+[research.quick]
+sub_questions = 3
+max_searches = 3
+max_pages = 5
+time_budget_secs = 150
+
+[research.standard]
+sub_questions = 4
+max_searches = 6
+max_pages = 10
+time_budget_secs = 360
+
+[research.deep]
+sub_questions = 6
+max_searches = 12
+max_pages = 20
+time_budget_secs = 720

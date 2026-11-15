@@ -11,6 +11,7 @@ Pages (signed in):
 
     GET  /                       the voice client (Pipecat's prebuilt UI, from /client/)
     GET  /settings               Google (Gmail + Calendar) connection
+    /reports...                  research reports (jarvis.web.reports)
 
 Connecting Gmail + Calendar (what JARVIS may do for you; separate from signing in):
 
@@ -34,6 +35,7 @@ from jarvis.accounts import SignInRefused, sign_in
 from jarvis.oauth import ConnectStates, GoogleOAuth, NotConnected
 from jarvis.store import Database, Store
 from jarvis.web.auth import WebSettings, check_csrf, request_user, session_user, start_session
+from jarvis.web.reports import register_report_routes
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 
@@ -79,6 +81,9 @@ class WebDeps:
     login: LoginClient | None
     connect_states: ConnectStates
     google_oauth: Callable[[Store], GoogleOAuth]  # the connect-flow handler for one user's store
+    # The JARVIS core (registry, config), built on first use: the report pages run
+    # send_email and the approval gate through it. None leaves those buttons off.
+    core: Callable[[], Any] | None = None
 
 
 def register_routes(app: FastAPI, deps: WebDeps) -> None:
@@ -160,7 +165,10 @@ def register_routes(app: FastAPI, deps: WebDeps) -> None:
 
     @app.get("/", include_in_schema=False)
     async def home(request: Request):
-        return page(request, "home.html", user=request_user(request))
+        from datetime import UTC, datetime
+
+        return page(request, "home.html", user=request_user(request),
+                    now=datetime.now(UTC).isoformat())
 
     @app.get("/settings", include_in_schema=False)
     async def settings_page(request: Request, notice: str = ""):
@@ -248,3 +256,19 @@ def register_routes(app: FastAPI, deps: WebDeps) -> None:
         user = request_user(request)
         account = await deps.google_oauth(await user_store(user.id)).account()
         return {"user": {"id": user.id, "email": user.email}, "google": account}
+
+    async def google_account(store: Store) -> str | None:
+        try:
+            return await deps.google_oauth(store).account()
+        except Exception as e:
+            logger.warning(f"Could not read the Google connection: {e}")
+            return None
+
+    register_report_routes(
+        app,
+        templates=TEMPLATES,
+        user_store=user_store,
+        core=deps.core,
+        google_account=google_account,
+        public_url=settings.public_url,
+    )

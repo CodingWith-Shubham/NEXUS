@@ -27,6 +27,12 @@ Where a tool is offered:
 - ``blocking=False``: on voice, the call runs in the background (Gemini Live's
   NON_BLOCKING tools), so the conversation goes on and the result is spoken
   when it arrives. For tools that take a few seconds.
+
+A pack can also run its own kind of background task: ``task_handlers`` maps a
+task ``kind`` (a row in ``tasks`` created with ``store.create_task(kind=...)``)
+to ``async def handler(task, ctx) -> str``. The worker calls it instead of its
+general tool loop; the returned text is the task's result. Raise
+:class:`TaskCancelled` when the user cancelled the job mid-run.
 """
 
 import importlib
@@ -38,8 +44,10 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jarvis.config import Config
+    from jarvis.llm import ChatModel
     from jarvis.registry import ToolRegistry
-    from jarvis.store import Store
+    from jarvis.search_providers import SearchProvider
+    from jarvis.store import Row, Store
 
 SKILLS_PACKAGE = "skills"
 TOOL_ATTR = "__jarvis_tool__"
@@ -68,6 +76,8 @@ class ToolContext:
     # Sends a message to the connected client (an RTVI server message), when there is one.
     notify: Callable[[dict], Awaitable[None]] | None = None
     config: "Config | None" = None  # jarvis.toml, for packs that need settings
+    llm: "ChatModel | None" = None  # the worker's text model chain, when a tool needs one
+    search: "SearchProvider | None" = None  # the [search] provider, when a tool needs one
 
     @property
     def user_id(self) -> str:
@@ -125,6 +135,11 @@ def tool_spec(fn: ToolFn) -> ToolSpec:
 
 
 SessionContextFn = Callable[["Store"], Awaitable[str]]
+TaskHandler = Callable[["Row", ToolContext], Awaitable[str]]
+
+
+class TaskCancelled(Exception):
+    """Raised by a task handler when the user cancelled the job while it ran."""
 
 
 @dataclass
@@ -138,6 +153,8 @@ class SkillPack:
     # Called at the start of each voice session; the text it returns is added to
     # the system instruction (e.g. what the assistant remembers about the user).
     session_context: SessionContextFn | None = None
+    # Background task kinds this pack runs itself (see the module docstring).
+    task_handlers: dict[str, TaskHandler] = field(default_factory=dict)
 
 
 def read_prompt(package_file: str, filename: str) -> str:

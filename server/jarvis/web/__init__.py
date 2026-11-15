@@ -78,6 +78,14 @@ def web_settings_from_env(config: Config) -> WebSettings:
 
 def web_deps_from_env(config: Config, database: Callable[[], Awaitable[Database]]) -> WebDeps:
     settings = web_settings_from_env(config)
+    built = []
+
+    def core():
+        if not built:
+            from jarvis.app import build_core
+
+            built.append(build_core(config))
+        return built[0]
 
     def google_oauth(store: Store) -> GoogleOAuth:
         return GoogleOAuth.from_env(
@@ -92,4 +100,5 @@ def web_deps_from_env(config: Config, database: Callable[[], Awaitable[Database]
         ),
         connect_states=ConnectStates(settings.session_secret),
         google_oauth=google_oauth,
+        core=core,
     )

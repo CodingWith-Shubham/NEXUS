@@ -14,7 +14,7 @@ from pipecat.adapters.llm.schemas.direct_function import BaseDirectFunctionWrapp
 from pipecat.adapters.llm.schemas.function_schema import FunctionSchema
 from pipecat.services.llm_service import FunctionCallParams
 
-from jarvis.skills import SkillPack, ToolContext, ToolSpec, tool_spec
+from jarvis.skills import SkillPack, TaskHandler, ToolContext, ToolSpec, tool_spec
 
 # Identity comes from the session (ToolContext.user_id), never from the model.
 RESERVED_PARAMS = frozenset({"user_id"})
@@ -38,7 +38,12 @@ class RegisteredTool:
 class ToolRegistry:
     def __init__(self, packs: list[SkillPack], *, max_voice_tools: int = 10):
         self._tools: dict[str, RegisteredTool] = {}
+        self._task_handlers: dict[str, TaskHandler] = {}
         for pack in packs:
+            for kind, handler in pack.task_handlers.items():
+                if kind == "general" or kind in self._task_handlers:
+                    raise ValueError(f"task kind {kind!r} from pack {pack.name!r} is taken")
+                self._task_handlers[kind] = handler
             for fn in pack.tools:
                 spec = tool_spec(fn)
                 if spec.name in self._tools:
@@ -65,6 +70,10 @@ class ToolRegistry:
 
     def get(self, name: str) -> RegisteredTool | None:
         return self._tools.get(name)
+
+    def task_handler(self, kind: str) -> TaskHandler | None:
+        """The loaded pack's handler for a background task kind, if any."""
+        return self._task_handlers.get(kind)
 
     def voice_tool_names(self) -> list[str]:
         return [n for n, t in self._tools.items() if t.spec.voice]

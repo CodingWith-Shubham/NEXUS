@@ -10,8 +10,13 @@ Providers, chosen with ``[search] provider`` in jarvis.toml:
 - ``tavily``: Tavily's search API; the worker model chain writes the answer from the results.
 - ``google``: Google Search grounding on a Gemini model (needs a billed Gemini key).
 
-To add one (Exa, Serper, ...): write a class with ``name`` and ``async search()``,
-and register it in :data:`PROVIDERS`.
+To add one (Exa, Serper, ...): write a class with ``name``, ``async search()``
+and ``async find()``, and register it in :data:`PROVIDERS`.
+
+``find(query)`` returns the raw results (URL, title, snippet, date) without
+writing an answer; deep research uses it, then reads the pages itself. It
+returns ``[]`` when nothing was found and raises SearchUnavailable when search
+itself isn't working.
 """
 
 import os
@@ -40,6 +45,14 @@ class SearchResult:
     excerpts: list[dict[str, str]] = field(default_factory=list)
 
 
+@dataclass
+class SearchHit:
+    url: str
+    title: str = ""
+    snippet: str = ""
+    published: str = ""  # as the provider gave it, when it did
+
+
 class SearchUnavailable(Exception):
     """Search couldn't be done. ``str(e)`` is safe to tell the user."""
 
@@ -48,6 +61,8 @@ class SearchProvider(Protocol):
     name: str
 
     async def search(self, query: str) -> SearchResult: ...
+
+    async def find(self, query: str, max_results: int = 5) -> list[SearchHit]: ...
 
 
 # The answer writer: turns raw results into a short spoken answer.
@@ -136,11 +151,28 @@ class TavilyProvider:
             return SearchResult(answer="", sources=sources, excerpts=_excerpts(results))
         return SearchResult(answer=answer, sources=sources)
 
-    async def _fetch(self, query: str) -> list[dict[str, Any]]:
+    async def find(self, query: str, max_results: int = 5) -> list[SearchHit]:
+        if not self._api_key:
+            raise SearchUnavailable("Web search is unavailable: no Tavily API key is set up.")
+        hits: list[SearchHit] = []
+        for r in await self._fetch(query, max_results=max_results):
+            url = r.get("url") or ""
+            if url and all(h.url != url for h in hits):
+                hits.append(
+                    SearchHit(
+                        url=url,
+                        title=r.get("title") or "",
+                        snippet=(r.get("content") or "")[:EXCERPT_CHARS],
+                        published=r.get("published_date") or "",
+                    )
+                )
+        return hits
+
+    async def _fetch(self, query: str, *, max_results: int | None = None) -> list[dict[str, Any]]:
         body = {
             "query": query,
             "search_depth": self._search_depth,
-            "max_results": self._max_results,
+            "max_results": max_results or self._max_results,
             "include_answer": False,  # the worker model writes the answer
         }
         headers = {"Authorization": f"Bearer {self._api_key}"}
@@ -232,6 +264,16 @@ class GoogleGroundingProvider:
         if not answer:
             raise SearchUnavailable("The web search returned no answer.")
         return SearchResult(answer=answer, sources=grounding_sources(response))
+
+    async def find(self, query: str, max_results: int = 5) -> list[SearchHit]:
+        # Grounding gives source pages, not snippets; research reads the pages itself.
+        try:
+            result = await self.search(query)
+        except SearchUnavailable as e:
+            if "no answer" in str(e):
+                return []
+            raise
+        return [SearchHit(url=s["url"], title=s["title"]) for s in result.sources[:max_results]]
 
 
 def grounding_sources(response: types.GenerateContentResponse) -> list[dict[str, str]]:

@@ -4,9 +4,14 @@ Runs alongside a voice session. It polls the store, and for each item it has
 not announced yet it appends a developer message to the conversation and runs
 the model, so Gemini Live speaks it in its own words. Items finished while no
 one was connected are announced at the start of the next session.
+
+A finished research task is announced from its report (title and spoken
+summary), and the browser gets a ``research-report`` message with a link to
+``/reports/<id>``.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from loguru import logger
 from pipecat.frames.frames import LLMMessagesAppendFrame
@@ -17,7 +22,14 @@ ANNOUNCE_RESULT_CHARS = 4000
 
 
 class Announcer:
-    def __init__(self, store: Store, llm, *, poll_secs: float = 3.0):
+    def __init__(
+        self,
+        store: Store,
+        llm,
+        *,
+        poll_secs: float = 3.0,
+        notify: Callable[[dict], Awaitable[None]] | None = None,
+    ):
         """
         Args:
             store: Where tasks and pending actions live.
@@ -28,10 +40,12 @@ class Announcer:
                 Queued at the pipeline's start instead, the user aggregator
                 absorbs the frame and the model never hears it.
             poll_secs: How often to check.
+            notify: Sends a message to the browser (an RTVI server message).
         """
         self._store = store
         self._llm = llm
         self._poll_secs = poll_secs
+        self._notify = notify
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -61,7 +75,10 @@ class Announcer:
         """Announce everything pending; returns how many items were announced."""
         count = 0
         for task in await self._store.unannounced_tasks():
-            await self._say(_task_message(task))
+            if task.get("kind") == "research":
+                await self._announce_research(task)
+            else:
+                await self._say(_task_message(task))
             await self._store.mark_task_announced(task["id"])
             count += 1
         for action in await self._store.unannounced_worker_actions():
@@ -69,6 +86,38 @@ class Announcer:
             await self._store.mark_action_announced(action["id"])
             count += 1
         return count
+
+    async def _announce_research(self, task: Row) -> None:
+        report_id = (task.get("params") or {}).get("report_id")
+        report = await self._store.get_report(report_id) if report_id else None
+        if report is None:
+            await self._say(_task_message(task))
+            return
+        if report["status"] != "done":
+            await self._say(
+                f"The research on \"{report['topic']}\" didn't finish: "
+                f"{report.get('error') or task.get('error') or 'unknown error'}\n\n"
+                "Tell the user briefly what went wrong and offer to try again."
+            )
+            return
+        await self._say(
+            f"A research report is ready (report_id {report['id']}): \"{report.get('title')}\".\n"
+            f"Spoken summary: {report.get('spoken_summary') or task.get('result') or ''}\n\n"
+            "Tell the user in two or three spoken sentences, say the full report with sources "
+            "is on the Reports page, and offer to answer questions about it (ask_report)."
+        )
+        if self._notify is not None:
+            try:
+                await self._notify(
+                    {
+                        "type": "research-report",
+                        "report_id": report["id"],
+                        "title": report.get("title") or report["topic"],
+                        "url": f"/reports/{report['id']}",
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Could not send the report link to the browser: {e}")
 
     async def _say(self, text: str) -> None:
         frame = LLMMessagesAppendFrame(

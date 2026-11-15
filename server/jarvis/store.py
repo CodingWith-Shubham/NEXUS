@@ -33,9 +33,19 @@ from loguru import logger
 Row = dict[str, Any]
 
 FINISHED_TASK_STATUSES = ("done", "failed")
+ACTIVE_REPORT_STATUSES = ("queued", "running")
+FINISHED_REPORT_STATUSES = ("done", "failed", "cancelled")
+REPORT_LIST_COLUMNS = (
+    "id,topic,depth,status,progress,progress_note,title,error,created_at,started_at,finished_at"
+)
 
-# The tables that belong to a user; each has a NOT NULL user_id (0003_multi_user.sql).
+
+class ActiveReportExists(Exception):
+    """The user already has a queued or running research job (one at a time)."""
+
+# The tables that belong to a user; each has a NOT NULL user_id (0003, 0004 migrations).
 USER_TABLES = (
+    "reports",
     "memory",
     "notes",
     "reminders",
@@ -76,7 +86,14 @@ class Store(Protocol):
     user_id: str
 
     # tasks
-    async def create_task(self, request: str, session_id: str | None) -> Row: ...
+    async def create_task(
+        self,
+        request: str,
+        session_id: str | None,
+        *,
+        kind: str = "general",
+        params: dict | None = None,
+    ) -> Row: ...
     async def get_task(self, task_id: str) -> Row | None: ...
     async def recent_tasks(self, limit: int = 5) -> list[Row]: ...
     async def finish_task(
@@ -135,6 +152,24 @@ class Store(Protocol):
     async def get_oauth_token(self, provider: str) -> Row | None: ...
     async def save_oauth_token(self, provider: str, account: str, fields: dict) -> Row: ...
     async def delete_oauth_token(self, provider: str) -> None: ...
+
+    # research reports
+    async def create_report(self, topic: str, depth: str) -> Row:
+        """A new queued report. Raises ActiveReportExists if one is queued or running."""
+        ...
+
+    async def get_report(self, report_id: str) -> Row | None: ...
+    async def list_reports(self, limit: int = 50) -> list[Row]: ...
+    async def active_report(self) -> Row | None: ...
+    async def latest_report(self, status: str | None = None) -> Row | None: ...
+
+    async def update_report(
+        self, report_id: str, fields: dict, *, only_if_status: tuple[str, ...] | None = None
+    ) -> Row | None:
+        """Update a report; with ``only_if_status``, only when its status is one of those."""
+        ...
+
+    async def reports_finished_since(self, since: str) -> list[Row]: ...
 
 
 class Database(Protocol):
@@ -245,8 +280,18 @@ class SupabaseStore:
 
     # tasks
 
-    async def create_task(self, request: str, session_id: str | None) -> Row:
-        res = await self._insert("tasks", {"request": request, "session_id": session_id}).execute()
+    async def create_task(
+        self,
+        request: str,
+        session_id: str | None,
+        *,
+        kind: str = "general",
+        params: dict | None = None,
+    ) -> Row:
+        res = await self._insert(
+            "tasks",
+            {"request": request, "session_id": session_id, "kind": kind, "params": params or {}},
+        ).execute()
         return res.data[0]
 
     async def get_task(self, task_id: str) -> Row | None:
@@ -483,6 +528,70 @@ class SupabaseStore:
     async def delete_oauth_token(self, provider: str) -> None:
         await self._delete("oauth_tokens").eq("provider", provider).execute()
 
+    # research reports
+
+    async def create_report(self, topic: str, depth: str) -> Row:
+        try:
+            res = await self._insert("reports", {"topic": topic, "depth": depth}).execute()
+        except Exception as e:
+            if getattr(e, "code", None) == "23505":  # reports_one_active_per_user
+                raise ActiveReportExists() from e
+            raise
+        return res.data[0]
+
+    async def get_report(self, report_id: str) -> Row | None:
+        if not _is_uuid(report_id):
+            return None
+        res = await self._select("reports").eq("id", report_id).limit(1).execute()
+        return res.data[0] if res.data else None
+
+    async def list_reports(self, limit: int = 50) -> list[Row]:
+        res = (
+            await self._select("reports", REPORT_LIST_COLUMNS)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data
+
+    async def active_report(self) -> Row | None:
+        res = (
+            await self._select("reports")
+            .in_("status", list(ACTIVE_REPORT_STATUSES))
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+
+    async def latest_report(self, status: str | None = None) -> Row | None:
+        q = self._select("reports")
+        if status:
+            q = q.eq("status", status)
+        res = await q.order("created_at", desc=True).limit(1).execute()
+        return res.data[0] if res.data else None
+
+    async def update_report(
+        self, report_id: str, fields: dict, *, only_if_status: tuple[str, ...] | None = None
+    ) -> Row | None:
+        if not _is_uuid(report_id):
+            return None
+        q = self._update("reports", {**fields, "updated_at": _now()}).eq("id", report_id)
+        if only_if_status:
+            q = q.in_("status", list(only_if_status))
+        res = await q.execute()
+        return res.data[0] if res.data else None
+
+    async def reports_finished_since(self, since: str) -> list[Row]:
+        res = (
+            await self._select("reports", REPORT_LIST_COLUMNS)
+            .in_("status", list(FINISHED_REPORT_STATUSES))
+            .gt("finished_at", since)
+            .order("finished_at")
+            .execute()
+        )
+        return res.data
+
 
 def _escape_like(text: str) -> str:
     """Make user text match literally in a LIKE/ILIKE pattern."""
@@ -509,6 +618,7 @@ class MemoryDatabase:
         self.summaries: list[Row] = []
         self.oauth: dict[tuple[str, str], Row] = {}  # (user_id, provider) -> row
         self.users: dict[str, Row] = {}
+        self.reports: dict[str, Row] = {}
         self._seq = itertools.count()
 
     def stamp(self) -> str:
@@ -615,6 +725,10 @@ class MemoryStore:
         return self._mine(self.db.summaries)
 
     @property
+    def reports(self) -> dict[str, Row]:
+        return {k: r for k, r in self.db.reports.items() if r["user_id"] == self.user_id}
+
+    @property
     def oauth(self) -> dict[tuple[str, str], Row]:
         """This user's sign-ins, keyed by (provider, account)."""
         return {
@@ -630,11 +744,20 @@ class MemoryStore:
 
     # tasks
 
-    async def create_task(self, request: str, session_id: str | None) -> Row:
+    async def create_task(
+        self,
+        request: str,
+        session_id: str | None,
+        *,
+        kind: str = "general",
+        params: dict | None = None,
+    ) -> Row:
         row = {
             "id": str(uuid.uuid4()),
             "user_id": self.user_id,
             "request": request,
+            "kind": kind,
+            "params": dict(params or {}),
             "status": "queued",
             "result": None,
             "error": None,
@@ -865,3 +988,65 @@ class MemoryStore:
 
     async def delete_oauth_token(self, provider: str) -> None:
         self.db.oauth.pop((self.user_id, provider), None)
+
+    # research reports
+
+    async def create_report(self, topic: str, depth: str) -> Row:
+        if any(r["status"] in ACTIVE_REPORT_STATUSES for r in self.reports.values()):
+            raise ActiveReportExists()
+        now = self._stamp()
+        row = {
+            "id": str(uuid.uuid4()),
+            "user_id": self.user_id,
+            "task_id": None,
+            "topic": topic,
+            "depth": depth,
+            "status": "queued",
+            "progress": 0,
+            "progress_note": None,
+            "title": None,
+            "spoken_summary": None,
+            "content": None,
+            "body_text": None,
+            "stats": {},
+            "error": None,
+            "created_at": now,
+            "started_at": None,
+            "finished_at": None,
+            "updated_at": now,
+        }
+        self.db.reports[row["id"]] = row
+        return dict(row)
+
+    async def get_report(self, report_id: str) -> Row | None:
+        row = self._owned(self.db.reports, report_id)
+        return dict(row) if row else None
+
+    async def list_reports(self, limit: int = 50) -> list[Row]:
+        rows = sorted(self.reports.values(), key=lambda r: r["created_at"], reverse=True)
+        return [dict(r) for r in rows[:limit]]
+
+    async def active_report(self) -> Row | None:
+        rows = [r for r in await self.list_reports(1000) if r["status"] in ACTIVE_REPORT_STATUSES]
+        return rows[0] if rows else None
+
+    async def latest_report(self, status: str | None = None) -> Row | None:
+        rows = [r for r in await self.list_reports(1000) if not status or r["status"] == status]
+        return rows[0] if rows else None
+
+    async def update_report(
+        self, report_id: str, fields: dict, *, only_if_status: tuple[str, ...] | None = None
+    ) -> Row | None:
+        row = self._owned(self.db.reports, report_id)
+        if row is None or (only_if_status and row["status"] not in only_if_status):
+            return None
+        row.update({k: v for k, v in fields.items() if k != "user_id"}, updated_at=self._stamp())
+        return dict(row)
+
+    async def reports_finished_since(self, since: str) -> list[Row]:
+        rows = [
+            r
+            for r in self.reports.values()
+            if r["status"] in FINISHED_REPORT_STATUSES and (r["finished_at"] or "") > since
+        ]
+        return [dict(r) for r in sorted(rows, key=lambda r: r["finished_at"])]

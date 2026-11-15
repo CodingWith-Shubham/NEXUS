@@ -1,0 +1,55 @@
+name: research_audio
+
+# Deep research by voice: start a quick job, ask how it's going, cancel it, then
+# start one and let it finish. It runs as JARVIS_EVAL_USER_EMAIL (server/.env). The
+# worker must be running for anything past "started" to happen, and the job uses
+# real search credits and worker-model calls.
+#
+#   uv run bot.py                                            # terminal 1
+#   uv run worker.py                                         # terminal 2
+#   uv run pipecat eval run evals/research_audio.yaml -v     # terminal 3
+#
+# The full live test, including the spoken announcement and the report page, is
+# docs/research-voice-test.md; this scenario only checks the tool calls.
+
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+    model: small-streaming
+
+scenarios:
+  - name: research_audio
+    turns:
+      - expect:
+          - event: response
+
+      - user: "Please do some quick research on the electric scooter market in India."
+        expect:
+          - event: function_call
+            calls:
+              - name: start_research
+          - event: response
+            eval: "the assistant says it has started the research and will report back, without giving research results yet"
+
+      - user: "How is the research going?"
+        expect:
+          - event: function_call
+            calls:
+              - name: get_research_status
+          - event: response
+
+      - user: "Actually, cancel that research."
+        expect:
+          - event: function_call
+            calls:
+              - name: cancel_research
+          - event: response
+            eval: "the assistant confirms the research was cancelled"

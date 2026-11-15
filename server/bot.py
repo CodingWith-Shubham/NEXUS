@@ -99,6 +99,8 @@ async def run_bot(
         session_id=runner_args.session_id,
         timezone=config.tz(),
         config=config,
+        llm=core.llm,
+        search=core.search,
     )
     logger.info(f"Voice tools: {core.registry.voice_tool_names()}")
 
@@ -166,8 +168,11 @@ async def run_bot(
 
     await runner.add_workers(worker)
 
-    # Speaks up when a background task finishes or the worker needs approval.
-    announcer = Announcer(store, llm, poll_secs=core.config.announce_poll_secs)
+    # Speaks up when a background task finishes or the worker needs approval, and
+    # sends the browser a link when a research report is ready.
+    announcer = Announcer(
+        store, llm, poll_secs=core.config.announce_poll_secs, notify=notify_client
+    )
 
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):

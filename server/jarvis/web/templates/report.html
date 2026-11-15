@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% macro cites(p) %}{% for n in p.sources %}<sup><a href="#src-{{ n }}">[{{ n }}]</a></sup>{% endfor %}{% endmacro %}
+{% block title %}{{ report.title or report.topic }} · JARVIS{% endblock %}
+{% block body %}
+{% if active %}<meta http-equiv="refresh" content="10">{% endif %}
+<main class="wide">
+  <p class="src-meta"><a href="/reports">All reports</a></p>
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if pending %}
+  <div class="card" style="margin-bottom:16px">
+    <p><strong>Approve this email?</strong><br>{{ pending.summary }}</p>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/confirm">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="report_id" value="{{ report.id }}">
+      <button type="submit">Send it</button>
+    </form>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/cancel">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="report_id" value="{{ report.id }}">
+      <button class="secondary" type="submit">Cancel</button>
+    </form>
+    <p class="src-meta" style="margin:12px 0 0">You can also tell JARVIS to confirm or cancel it.</p>
+  </div>
+  {% endif %}
+
+  <h1>{{ report.title or report.topic }}</h1>
+  <p class="src-meta">{{ report.depth | capitalize }} research · started {{ report.created_at | when }}{% if report.finished_at %} · finished {{ report.finished_at | when }}{% endif %}
+    · <span class="pill {{ report.status }}">{{ report.status }}</span></p>
+
+  {% if active %}
+    <div class="bar"><span style="width: {{ report.progress }}%"></span></div>
+    <p class="src-meta">{{ report.progress }}% · {{ report.progress_note or "Waiting for the worker" }}. This page refreshes itself.</p>
+  {% elif report.status == "failed" %}
+    <p class="notice error">{{ report.error or "The research failed." }}</p>
+  {% elif report.status == "cancelled" %}
+    <p class="muted">This research was cancelled before it finished.</p>
+  {% endif %}
+
+  {% if report.status == "done" %}
+  <form method="post" action="/reports/{{ report.id }}/email" style="margin:12px 0 4px">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+    <button class="secondary" type="submit">Email me this report</button>
+  </form>
+  <article>
+    <h2>Summary</h2>
+    {% if content.summary %}
+    <ul>{% for p in content.summary %}<li>{{ p.text }}{{ cites(p) }}</li>{% endfor %}</ul>
+    {% else %}<p class="muted">Nothing could be confirmed from the sources read.</p>{% endif %}
+
+    {% for sec in content.sections %}
+    <h2>{{ loop.index }}. {{ sec.question }}</h2>
+    {% if sec.points %}
+    <ul>{% for p in sec.points %}<li>{{ p.text }}{{ cites(p) }}</li>{% endfor %}</ul>
+    {% else %}<p class="muted">Not answered by the sources read.</p>{% endif %}
+    {% endfor %}
+
+    {% if content.disagreements %}
+    <h2>Where sources disagree</h2>
+    <ul>{% for p in content.disagreements %}<li>{{ p.text }}{{ cites(p) }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <h2>What I couldn&rsquo;t confirm</h2>
+    {% if content.unconfirmed %}
+    <ul>{% for u in content.unconfirmed %}<li>{{ u }}</li>{% endfor %}</ul>
+    {% else %}<p class="muted">Nothing outstanding.</p>{% endif %}
+
+    <h2>Sources</h2>
+    {% if content.sources %}
+    <ol class="sources">
+    {% for s in content.sources %}
+      {% set link = s.url | safe_url %}
+      <li id="src-{{ s.n }}">
+        {% if link %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %}
+        <div class="src-meta">{{ s.url | host }}{% if s.published %} · published {{ s.published }}{% endif %}</div>
+      </li>
+    {% endfor %}
+    </ol>
+    {% else %}<p class="muted">No sources cited.</p>{% endif %}
+  </article>
+  {% endif %}
+
+  {% if content.also_read or content.unreadable %}
+  <details style="margin-top:24px">
+    <summary class="src-meta">Other pages ({{ (content.also_read or []) | length }} read but not cited, {{ (content.unreadable or []) | length }} couldn&rsquo;t be read)</summary>
+    <ul class="src-meta">
+      {% for s in content.also_read or [] %}{% set link = s.url | safe_url %}<li>{% if link %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">{{ s.title }}</a>{% else %}{{ s.title }}{% endif %} · read</li>{% endfor %}
+      {% for s in content.unreadable or [] %}<li>{{ s.title }} ({{ s.url | host }}) · {{ s.reason }}</li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</main>
+{% endblock %}

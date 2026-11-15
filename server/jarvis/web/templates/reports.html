@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Reports · JARVIS{% endblock %}
+{% block body %}
+<main class="wide">
+  <h1>Research reports</h1>
+  {% if reports %}
+  <table>
+    <thead><tr><th>Report</th><th>Depth</th><th>Status</th><th>Started</th></tr></thead>
+    <tbody>
+    {% for r in reports %}
+      <tr>
+        <td><a href="/reports/{{ r.id }}">{{ r.title or r.topic }}</a>
+          {% if r.title and r.title != r.topic %}<div class="src-meta">{{ r.topic }}</div>{% endif %}</td>
+        <td>{{ r.depth }}</td>
+        <td><span class="pill {{ r.status }}">{{ r.status }}{% if r.status in ('queued', 'running') %} · {{ r.progress }}%{% endif %}</span></td>
+        <td class="src-meta">{{ r.created_at | when }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No reports yet. Ask JARVIS to research something, for example: "Research the electric scooter market in India, quick."</p>
+  {% endif %}
+</main>
+{% endblock %}

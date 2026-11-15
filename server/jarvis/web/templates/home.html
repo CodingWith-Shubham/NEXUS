@@ -4,6 +4,40 @@
 <style>
   body { display: flex; flex-direction: column; }
   iframe { flex: 1; width: 100%; border: 0; display: block; background: var(--bg); }
+  #toast { position: fixed; right: 16px; bottom: 16px; max-width: min(24rem, calc(100vw - 32px)); display: none;
+           background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px;
+           box-shadow: 0 6px 24px rgba(0, 0, 0, .18); }
+  #toast .link { margin-left: 8px; }
 </style>
 <iframe src="/client/" title="JARVIS voice client" allow="microphone; camera; autoplay; display-capture"></iframe>
+<div id="toast" role="status" aria-live="polite">
+  <span id="toast-text"></span>
+  <a id="toast-link" target="_blank" href="/reports">Open</a>
+  <button class="link" type="button" onclick="this.parentElement.style.display='none'">Dismiss</button>
+</div>
+<script>
+  // Shows a link when a research report finishes; JARVIS announces it by voice too.
+  (function () {
+    let since = {{ now | tojson }};
+    const toast = document.getElementById("toast");
+    async function poll() {
+      try {
+        const r = await fetch("/reports/updates?since=" + encodeURIComponent(since), {credentials: "same-origin"});
+        if (r.ok) {
+          const data = await r.json();
+          since = data.now;
+          const last = data.reports[data.reports.length - 1];
+          if (last) {
+            document.getElementById("toast-text").textContent =
+              last.status === "done" ? "Report ready: " + last.title : "Research " + last.status + ": " + last.title;
+            document.getElementById("toast-link").href = last.url;
+            toast.style.display = "block";
+          }
+        }
+      } catch (e) {}
+      setTimeout(poll, 8000);
+    }
+    setTimeout(poll, 8000);
+  })();
+</script>
 {% endblock %}

@@ -43,10 +43,14 @@ class Config:
     providers: dict[str, dict] = field(default_factory=lambda: dict(DEFAULT_PROVIDERS))
     workspace_provider: str = "google"  # calendar + email: "google" or "microsoft" (stub)
     oauth_redirect_uri: str = "http://localhost:7860/auth/google/callback"
-    oauth_sign_in_url: str = "http://localhost:7860/auth/google"
+    # Where a user connects Google (Gmail + Calendar); tools point users here.
+    oauth_sign_in_url: str = "http://localhost:7860/settings"
     working_hours: str = "09:00-18:00"  # find_free_time looks inside these, user's zone
     worker_poll_secs: float = 2.0
     worker_max_steps: int = 8
+    # [web]: the sign-in pages on the bot's server.
+    public_url: str = "http://localhost:7860"  # https:// turns on Secure cookies
+    session_hours: float = 168.0  # a sign-in lasts this long, then the user signs in again
 
     def tz(self) -> tzinfo | None:
         """The user's time zone, or None for the server's local zone."""
@@ -71,6 +75,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     worker = data.get("worker", {})
     search = data.get("search", {})
     workspace = data.get("workspace", {})
+    web = data.get("web", {})
     return Config(
         skills=list(skills.get("enabled", [])),
         timezone=user.get("timezone", ""),
@@ -89,8 +94,10 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         oauth_redirect_uri=str(
             workspace.get("redirect_uri", "http://localhost:7860/auth/google/callback")
         ),
-        oauth_sign_in_url=str(workspace.get("sign_in_url", "http://localhost:7860/auth/google")),
+        oauth_sign_in_url=str(workspace.get("sign_in_url", "http://localhost:7860/settings")),
         working_hours=str(workspace.get("working_hours", "09:00-18:00")),
         worker_poll_secs=float(worker.get("poll_secs", 2)),
         worker_max_steps=int(worker.get("max_steps", 8)),
+        public_url=str(web.get("public_url", "http://localhost:7860")).rstrip("/"),
+        session_hours=float(web.get("session_hours", 168)),
     )

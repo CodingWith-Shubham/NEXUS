@@ -167,8 +167,8 @@ async def _run_one(replies, request="What day is it?"):
     ctx, store = make_ctx()
     await ctx.registry.execute("delegate_task", {"request": request}, ctx)
     llm = FakeChatModel(replies)
-    worker = TaskWorker(store, ctx.registry, llm=llm, system_instruction="sys", max_steps=3)
-    task = await store.claim_next_task(worker.worker_id)
+    worker = TaskWorker(store.db, ctx.registry, llm=llm, system_instruction="sys", max_steps=3)
+    task = await store.db.claim_next_task(worker.worker_id)
     await worker.run_task(task)
     return store, store.tasks[task["id"]], llm
 
@@ -221,8 +221,8 @@ async def test_worker_model_failure_fails_task():
 
     ctx, store = make_ctx()
     await ctx.registry.execute("delegate_task", {"request": "x"}, ctx)
-    worker = TaskWorker(store, ctx.registry, llm=Down(), system_instruction="sys")
-    task = await store.claim_next_task(worker.worker_id)
+    worker = TaskWorker(store.db, ctx.registry, llm=Down(), system_instruction="sys")
+    task = await store.db.claim_next_task(worker.worker_id)
     await worker.run_task(task)
     assert store.tasks[task["id"]]["status"] == "failed"
 

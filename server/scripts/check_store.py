@@ -1,9 +1,12 @@
 """Check the Supabase store end to end: every Phase 1 and 2 operation, then clean up.
 
-    uv run python scripts/check_store.py
+    uv run python scripts/check_store.py you@example.com
 
-Writes rows tagged with a random marker, reads them back through the same
-methods the bot uses, and deletes them again. Exits non-zero on any failure.
+Works as the JARVIS user with that email (they must have signed in once, or be
+the first user from 0003_multi_user.sql). Writes rows tagged with a random
+marker, reads them back through the same methods the bot uses, checks that a
+second, made-up user can't see them, and deletes them again. Exits non-zero on
+any failure.
 """
 
 import asyncio
@@ -16,13 +19,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv  # noqa: E402
 
-from jarvis.store import SupabaseStore  # noqa: E402
+from jarvis.store import SupabaseDatabase  # noqa: E402
 
 
 async def main() -> int:
     load_dotenv(override=True)
-    store = await SupabaseStore.from_env()
-    db = store._db
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    database = await SupabaseDatabase.from_env()
+    user = await database.get_user_by_email(sys.argv[1])
+    if user is None:
+        print(f"No JARVIS user {sys.argv[1]}. Sign in once at http://localhost:7860 first.")
+        return 2
+    store = database.for_user(user["id"])
+    stranger = database.for_user(str(uuid.uuid4()))
+    db = database._db
     tag = f"check-{uuid.uuid4().hex[:8]}"
     failures = 0
 
@@ -85,6 +97,16 @@ async def main() -> int:
         lambda rows: rows and rows[0]["summary"] == f"{tag} summary",
     )
 
+    # Scoping: another user sees none of it.
+    await check("other user: get_task", stranger.get_task(task["id"]), lambda r: r is None)
+    await check("other user: get_action", stranger.get_action(action["id"]), lambda r: r is None)
+    await check(
+        "other user: search_memory",
+        stranger.search_memory("who is my dentist"),
+        lambda rows: not any(r["content"] == fact for r in rows),
+    )
+    await check("other user: list_notes", stranger.list_notes(tag), lambda rows: rows == [])
+
     # Clean up everything tagged.
     for table, column in [
         ("pending_actions", "summary"),
@@ -95,7 +117,13 @@ async def main() -> int:
         ("session_summaries", "summary"),
     ]:
         try:
-            await db.table(table).delete().like(column, f"{tag}%").execute()
+            await (
+                db.table(table)
+                .delete()
+                .eq("user_id", user["id"])
+                .like(column, f"{tag}%")
+                .execute()
+            )
         except Exception as e:
             print(f"cleanup of {table} failed: {e}")
 

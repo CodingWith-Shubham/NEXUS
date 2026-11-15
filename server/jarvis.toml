@@ -46,10 +46,11 @@ depth = "basic"
 # Calendar and email provider: "google" (Gmail + Google Calendar) or "microsoft"
 # (Microsoft Graph; not implemented yet, answers "not available").
 provider = "google"
-# Google OAuth: register redirect_uri exactly on the OAuth client in Google Cloud.
-# Sign in by opening sign_in_url while the bot is running.
+# Google OAuth for Gmail + Calendar (separate from signing in to JARVIS): register
+# redirect_uri exactly on the OAuth client in Google Cloud. Each user connects their
+# own account from sign_in_url (the Settings page).
 redirect_uri = "http://localhost:7860/auth/google/callback"
-sign_in_url = "http://localhost:7860/auth/google"
+sign_in_url = "http://localhost:7860/settings"
 # find_free_time only offers slots inside these hours (your time zone).
 working_hours = "09:00-18:00"
 
@@ -83,3 +84,12 @@ api_key_env = "NEMOTRON_KEY"
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
 api_key_env = "GOOGLE_API_KEY"
+
+[web]
+# Sign-in pages, on the bot's server. Users sign in with Google (openid, email,
+# profile); only addresses in ALLOWED_EMAILS (server/.env) get in.
+# Login callback registered on the Google OAuth client: <public_url>/auth/login/callback
+# An https:// public_url turns on the Secure flag on the session cookie.
+public_url = "http://localhost:7860"
+# How long a sign-in lasts before the user must sign in again.
+session_hours = 168

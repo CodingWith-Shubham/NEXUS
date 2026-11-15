@@ -51,7 +51,13 @@ SummaryFn = Callable[["ToolContext", dict], Awaitable[str]]
 
 @dataclass
 class ToolContext:
-    """What a tool gets besides its arguments."""
+    """What a tool gets besides its arguments.
+
+    Whose data a tool touches is decided here, never by the model: ``store`` is
+    bound to the signed-in user of the session (or the task's owner, in the
+    worker), and :attr:`user_id` is read from it. Tools must not take a
+    ``user_id`` parameter; the registry refuses to load one.
+    """
 
     store: "Store"
     registry: "ToolRegistry"
@@ -62,6 +68,11 @@ class ToolContext:
     # Sends a message to the connected client (an RTVI server message), when there is one.
     notify: Callable[[dict], Awaitable[None]] | None = None
     config: "Config | None" = None  # jarvis.toml, for packs that need settings
+
+    @property
+    def user_id(self) -> str:
+        """The user this call acts for, from the session (never from tool arguments)."""
+        return self.store.user_id
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Not invited · JARVIS{% endblock %}
+{% block body %}
+<main class="narrow">
+  <div class="card">
+    <h1>You can't sign in to this JARVIS</h1>
+    <p>{{ reason }}</p>
+    <p class="muted">This JARVIS is invite-only. If you think this is a mistake, ask the person who runs it to add your address.</p>
+    <a class="button secondary" href="/login">Try another account</a>
+  </div>
+</main>
+{% endblock %}

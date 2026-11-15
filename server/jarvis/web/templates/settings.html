@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Settings · JARVIS{% endblock %}
+{% block body %}
+<main class="narrow">
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  <div class="card">
+    <h1>Google (Gmail + Calendar)</h1>
+    {% if account %}
+      <p>Connected as <strong>{{ account }}</strong>. JARVIS can read and draft mail, and read and change your calendar. Sending mail or inviting people always asks you first.</p>
+      <form method="post" action="/settings/google/disconnect">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+        <button class="danger" type="submit">Disconnect</button>
+      </form>
+    {% else %}
+      <p>Not connected. Connect your Google account so JARVIS can use your Gmail and Calendar. You can use a different Google account from the one you signed in with.</p>
+      {% if configured %}
+      <form method="post" action="/settings/google/connect">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+        <button type="submit">Connect Google (Gmail + Calendar)</button>
+      </form>
+      {% else %}
+      <p class="notice error">Google isn't set up on the server: add GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET and JARVIS_TOKEN_KEY to server/.env.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+  <p class="muted" style="margin-top:16px;font-size:13px">Signed in as {{ user.email }}.</p>
+</main>
+{% endblock %}

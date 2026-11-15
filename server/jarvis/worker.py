@@ -5,6 +5,11 @@ call ends. Each task is a small tool-calling loop over the registry's worker
 tools, in OpenAI chat format, on the model chain from ``[worker] models``
 (see :mod:`jarvis.llm`). Every tool call goes through
 :meth:`ToolRegistry.execute`, so the approval gate applies to the worker too.
+
+One worker serves every user. It claims the oldest queued task of anyone
+(:meth:`Database.claim_next_task`), then runs it entirely through the task
+owner's store (``database.for_user(task["user_id"])``): the tools, the result,
+the audit entries and any approval it raises all belong to that user.
 """
 
 import asyncio
@@ -20,7 +25,7 @@ from jarvis.config import Config
 from jarvis.llm import ChatModel
 from jarvis.registry import ToolRegistry
 from jarvis.skills import ToolContext
-from jarvis.store import Row, Store
+from jarvis.store import Database, Row
 
 
 class StepLimitReached(Exception):
@@ -30,7 +35,7 @@ class StepLimitReached(Exception):
 class TaskWorker:
     def __init__(
         self,
-        store: Store,
+        database: Database,
         registry: ToolRegistry,
         *,
         llm: ChatModel,
@@ -40,7 +45,7 @@ class TaskWorker:
         timezone: tzinfo | None = None,
         config: Config | None = None,
     ):
-        self._store = store
+        self._db = database
         self._registry = registry
         self._llm = llm
         self._system_instruction = system_instruction
@@ -58,7 +63,7 @@ class TaskWorker:
         )
         while True:
             try:
-                task = await self._store.claim_next_task(self.worker_id)
+                task = await self._db.claim_next_task(self.worker_id)
             except Exception as e:
                 logger.warning(f"Could not poll for tasks: {e}")
                 task = None
@@ -68,9 +73,13 @@ class TaskWorker:
             await self.run_task(task)
 
     async def run_task(self, task: Row) -> None:
-        logger.info(f"Task {task['id']} started: {task['request']!r}")
+        if not task.get("user_id"):
+            logger.error(f"Task {task['id']} has no user_id; skipped")
+            return
+        store = self._db.for_user(task["user_id"])
+        logger.info(f"Task {task['id']} for user {task['user_id']} started: {task['request']!r}")
         ctx = ToolContext(
-            store=self._store,
+            store=store,
             registry=self._registry,
             source="worker",
             session_id=task.get("session_id"),
@@ -87,11 +96,11 @@ class TaskWorker:
             result = await self._solve(request, ctx)
         except Exception as e:
             logger.exception(f"Task {task['id']} failed")
-            await self._store.finish_task(task["id"], "failed", error=str(e))
-            await self._store.audit("task_failed", detail={"error": str(e)}, task_id=task["id"])
+            await store.finish_task(task["id"], "failed", error=str(e))
+            await store.audit("task_failed", detail={"error": str(e)}, task_id=task["id"])
             return
-        await self._store.finish_task(task["id"], "done", result=result)
-        await self._store.audit("task_done", task_id=task["id"])
+        await store.finish_task(task["id"], "done", result=result)
+        await store.audit("task_done", task_id=task["id"])
         logger.info(f"Task {task['id']} done ({len(result)} chars)")
 
     async def _solve(self, request: str, ctx: ToolContext) -> str:

@@ -39,14 +39,22 @@ unavailable, errors) as open items; they are usually fixed by the next conversat
 If nothing of substance happened (only greetings or a test), reply with exactly: NOTHING"""
 
 
-async def build_session_context(store: Store, config: Config, packs: list[SkillPack]) -> str:
-    """Text appended to the voice system instruction for this session."""
+async def build_session_context(
+    store: Store, config: Config, packs: list[SkillPack], *, user_name: str = ""
+) -> str:
+    """Text appended to the voice system instruction for this session.
+
+    ``store`` is the signed-in user's, so the summaries and memories are theirs only.
+    """
     now = datetime.now(config.tz()) if config.timezone else datetime.now().astimezone()
     zone = config.timezone or str(now.tzinfo)
-    parts = [
+    parts = []
+    if user_name:
+        parts.append(f"You are speaking with {user_name}.")
+    parts.append(
         f"Current date and time: {now.strftime('%A %d %B %Y, %I:%M %p')} ({zone}, "
         f"{now.isoformat(timespec='minutes')})."
-    ]
+    )
 
     try:
         summaries = await store.recent_session_summaries(config.session_summaries_in_prompt)

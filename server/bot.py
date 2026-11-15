@@ -15,6 +15,10 @@ Required AI services:
 
 Run the bot using::
     uv run bot.py
+
+Then open http://localhost:7860 and sign in with Google. Every session belongs
+to the signed-in user who started it (see jarvis.web): its tools, memory,
+summaries and Google account are that user's only.
 """
 
 import os
@@ -33,7 +37,11 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frameworks.rtvi.frames import RTVIServerMessageFrame
-from pipecat.runner.types import RunnerArguments
+from pipecat.runner.types import (
+    RunnerArguments,
+    SmallWebRTCRunnerArguments,
+    WebSocketRunnerArguments,
+)
 from pipecat.runner.utils import create_transport
 from pipecat.services.google.gemini_live.llm import GeminiLiveLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
@@ -45,29 +53,45 @@ from jarvis.prompts import voice_instruction
 from jarvis.search import SearchSourceRecorder, voice_tools_schema
 from jarvis.sessions import GREETING, build_session_context, summarize_and_save
 from jarvis.skills import ToolContext
-from jarvis.store import SupabaseStore
+from jarvis.store import SupabaseDatabase
 from jarvis.voice_language import apply_transcription_hints
+from jarvis.web import SessionUser, current_user
 
 load_dotenv(override=True)
 
 
-async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
+_DATABASE: SupabaseDatabase | None = None
+
+
+async def database() -> SupabaseDatabase:
+    """The Supabase connection, shared by every session and the web routes."""
+    global _DATABASE
+    if _DATABASE is None:
+        _DATABASE = await SupabaseDatabase.from_env()
+    return _DATABASE
+
+
+async def run_bot(
+    transport: BaseTransport, runner_args: RunnerArguments, user: SessionUser
+) -> None:
     """Run the voice bot for this session.
 
     Args:
         transport: The transport for this session, built by ``create_transport``
             (or by hand for the dial-out/SIP production flows).
         runner_args: Runner session arguments. Carries the request ``body``
-            (e.g. dial-out settings, SIP call details) and ``session_id``; the
-            standard web/telephony pipelines don't need it.
+            (e.g. dial-out settings, SIP call details) and ``session_id``. The
+            body comes from the client and is never used to decide who the user is.
+        user: The signed-in user who started this session.
     """
-    logger.info("Starting bot")
+    logger.info(f"Starting bot for {user.email} ({user.id})")
     started_at = datetime.now(UTC)
 
     # JARVIS core: skill packs from jarvis.toml, their tools behind the approval gate.
     core = build_core()
     config = core.config
-    store = await SupabaseStore.from_env()
+    # Everything this session reads or writes goes through this user's store.
+    store = (await database()).for_user(user.id)
     tool_ctx = ToolContext(
         store=store,
         registry=core.registry,
@@ -78,8 +102,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
     logger.info(f"Voice tools: {core.registry.voice_tool_names()}")
 
-    # Date and time, recent conversation summaries, remembered facts.
-    session_context = await build_session_context(store, config, core.packs)
+    # Who the user is, date and time, recent conversation summaries, remembered facts.
+    session_context = await build_session_context(store, config, core.packs, user_name=user.name)
 
     # Transcribe the user with their language hints (see jarvis.voice_language).
     apply_transcription_hints(config.languages)
@@ -177,8 +201,27 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         logger.error(f"Could not save the session summary: {e}")
 
 
+async def _refuse(runner_args: RunnerArguments) -> None:
+    """Close a session that has no signed-in user (the web gate should have stopped it)."""
+    logger.error(f"Refusing session {runner_args.session_id}: no signed-in user")
+    try:
+        if isinstance(runner_args, SmallWebRTCRunnerArguments):
+            await runner_args.webrtc_connection.disconnect()
+        elif isinstance(runner_args, WebSocketRunnerArguments):
+            await runner_args.websocket.close(code=1008)
+    except Exception as e:
+        logger.warning(f"Could not close the refused session: {e}")
+
+
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
+    # The user comes from the session cookie of the request that started this
+    # session (jarvis.web.auth), never from runner_args.body.
+    user = current_user()
+    if user is None:
+        await _refuse(runner_args)
+        return
+
     transport_params = {
         "webrtc": lambda: TransportParams(
             audio_in_enabled=True,
@@ -193,33 +236,16 @@ async def bot(runner_args: RunnerArguments):
 
     transport = await create_transport(runner_args, transport_params)
 
-    await run_bot(transport, runner_args)
-
-
-async def _oauth():
-    """The Google sign-in handler for the /auth routes, built on first use."""
-    global _OAUTH
-    if _OAUTH is None:
-        from jarvis.config import load_config
-        from jarvis.oauth import GoogleOAuth
-
-        config = load_config()
-        _OAUTH = GoogleOAuth.from_env(
-            await SupabaseStore.from_env(),
-            redirect_uri=config.oauth_redirect_uri,
-            sign_in_url=config.oauth_sign_in_url,
-        )
-    return _OAUTH
-
-
-_OAUTH = None
+    await run_bot(transport, runner_args, user)
 
 
 if __name__ == "__main__":
     from pipecat.runner.run import app, main
 
-    from jarvis.auth_routes import register_auth_routes
+    from jarvis.config import load_config
+    from jarvis.web import install_web, web_deps_from_env
 
-    # Google sign-in on the same server: /auth/google, /auth/google/callback, /auth/status.
-    register_auth_routes(app, _oauth)
+    # Sign-in, settings and the gate in front of every runner route (jarvis.web).
+    # Installed before main() adds the runner's routes, so the gate wraps them all.
+    install_web(app, web_deps_from_env(load_config(), database))
     main()

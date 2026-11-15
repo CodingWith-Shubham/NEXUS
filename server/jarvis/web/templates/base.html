@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>{% block title %}JARVIS{% endblock %}</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --text: #1b1b1a; --muted: #6b6a66;
+    --line: #e3e2de; --accent: #1f5eff; --accent-text: #ffffff; --danger: #b42318;
+    --ok-bg: #ecf6ee; --ok-text: #1c6b33; --err-bg: #fdf0ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --panel: #1d1d1b; --text: #ecebe7; --muted: #a09f99;
+      --line: #2f2e2b; --accent: #6b93ff; --accent-text: #0b0b0a; --danger: #ff8a7a;
+      --ok-bg: #16281b; --ok-text: #8fd6a2; --err-bg: #2c1714;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header .brand { font-weight: 650; letter-spacing: .08em; margin-right: auto; color: var(--text); text-decoration: none; }
+  header nav { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  header .who { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+  main.narrow { max-width: 34rem; margin: 10vh auto 0; padding: 0 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 28px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  p { margin: 0 0 16px; }
+  .muted { color: var(--muted); }
+  button, .button {
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    font: inherit; font-weight: 550; padding: 9px 16px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text);
+    text-decoration: none;
+  }
+  button.secondary { background: transparent; color: var(--text); border-color: var(--line); }
+  button.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+  button.link { background: none; border: none; padding: 0; color: var(--accent); font-weight: 400; }
+  form.inline { display: inline; margin: 0; }
+  .notice { padding: 10px 14px; border-radius: 8px; background: var(--ok-bg); color: var(--ok-text); margin-bottom: 16px; }
+  .error { background: var(--err-bg); color: var(--danger); }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  code { font-size: 13px; }
+</style>
+</head>
+<body>
+{% if user %}
+<header>
+  <a class="brand" href="/">JARVIS</a>
+  <nav>
+    <span class="who">{{ user.email }}</span>
+    <a href="/settings">Settings</a>
+    <form class="inline" method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button class="link" type="submit">Sign out</button>
+    </form>
+  </nav>
+</header>
+{% endif %}
+{% block body %}{% endblock %}
+</body>
+</html>

@@ -13,10 +13,15 @@ an invite or a notice). Reading and drafting never do.
 Email content (subjects, snippets, bodies) comes from outside and is untrusted:
 it is returned wrapped in markers with a notice, and both prompts forbid acting
 on instructions inside it.
+
+Every call acts for ``ctx.user_id`` (the session's user): the provider is built
+on ``ctx.store``, which only holds that user's Google tokens. A user who hasn't
+connected Google gets "your Google account isn't connected yet".
 """
 
 import functools
 import re
+import weakref
 from datetime import date, datetime, time, timedelta, tzinfo
 
 from loguru import logger
@@ -28,7 +33,11 @@ from jarvis.workspace.factory import make_workspace_provider
 
 # Replaced in tests.
 provider_factory = make_workspace_provider
-_providers: dict[tuple[int, str], WorkspaceProvider] = {}
+# One provider per store (so per user and session), dropped with the store.
+# Weak keys, not id(store): an id can be reused by a later store of another user.
+_providers: "weakref.WeakKeyDictionary[object, dict[str, WorkspaceProvider]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 MAX_DAYS = 14
 MAX_SLOTS = 6
@@ -50,10 +59,10 @@ def _config(ctx: ToolContext) -> Config:
 
 def _provider(ctx: ToolContext) -> WorkspaceProvider:
     config = _config(ctx)
-    key = (id(ctx.store), config.workspace_provider)
-    if key not in _providers:
-        _providers[key] = provider_factory(config, ctx.store)
-    return _providers[key]
+    per_store = _providers.setdefault(ctx.store, {})
+    if config.workspace_provider not in per_store:
+        per_store[config.workspace_provider] = provider_factory(config, ctx.store)
+    return per_store[config.workspace_provider]
 
 
 def _tz(ctx: ToolContext) -> tzinfo | None:
@@ -536,8 +545,9 @@ async def connection_status(store) -> str:
             "saying the account wasn't connected is out of date."
         )
     return (
-        f"Calendar and email: not connected yet. The user can sign in at "
-        f"{config.oauth_sign_in_url}; still call the tools if asked, they report the status."
+        "Calendar and email: the user's Google account isn't connected yet. They can connect "
+        f"it on the Settings page ({config.oauth_sign_in_url}); still call the tools if asked, "
+        "they report the status."
     )
 
 

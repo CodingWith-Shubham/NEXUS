@@ -301,4 +301,4 @@ async def test_connection_status_when_not_signed_in(monkeypatch):
 
     monkeypatch.setattr(ws, "provider_factory", lambda config, store: NotSignedIn())
     text = await ws.connection_status(MemoryStore())
-    assert "not connected yet" in text and "/auth/google" in text
+    assert "isn't connected yet" in text and "/settings" in text

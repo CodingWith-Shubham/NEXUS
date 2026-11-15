@@ -16,6 +16,9 @@ from pipecat.services.llm_service import FunctionCallParams
 
 from jarvis.skills import SkillPack, ToolContext, ToolSpec, tool_spec
 
+# Identity comes from the session (ToolContext.user_id), never from the model.
+RESERVED_PARAMS = frozenset({"user_id"})
+
 
 class _ToolWrapper(BaseDirectFunctionWrapper):
     """Pipecat's direct-function schema extraction, with ``ctx`` as the special first parameter."""
@@ -44,6 +47,12 @@ class ToolRegistry:
                         f"tool {spec.name!r} is defined by both {other!r} and {pack.name!r}"
                     )
                 schema = _ToolWrapper(fn).to_function_schema()
+                reserved = RESERVED_PARAMS & set(schema.properties)
+                if reserved:
+                    raise ValueError(
+                        f"tool {spec.name!r} in pack {pack.name!r} takes {sorted(reserved)}: the "
+                        "user comes from ctx.user_id (the session), never from a tool argument"
+                    )
                 self._tools[spec.name] = RegisteredTool(spec=spec, pack=pack.name, schema=schema)
 
         voice = self.voice_tool_names()
@@ -74,6 +83,11 @@ class ToolRegistry:
         )
         if not allowed:
             return {"error": f"Unknown tool: {name}"}
+        if RESERVED_PARAMS & set(args):
+            logger.warning(f"Refused {name}: its arguments tried to set the user")
+            return {
+                "error": f"{name} does not take a user_id; it always acts for the signed-in user."
+            }
         spec = registered.spec
         audit = dict(tool=name, session_id=ctx.session_id, task_id=ctx.task_id)
 

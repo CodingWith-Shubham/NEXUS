@@ -1,14 +1,21 @@
-"""Google OAuth sign-in, and token storage and refresh in ``oauth_tokens``.
+"""Connecting a user's Google account (Gmail + Calendar), and token storage and refresh.
 
-Flow (web server, per Google's "OAuth 2.0 for Web Server Applications"):
+This is separate from signing in to JARVIS (``jarvis.web``, openid/email/profile
+only). Flow (web server, per Google's "OAuth 2.0 for Web Server Applications"):
 
-1. ``GET /auth/google`` redirects to Google's consent page with
-   ``access_type=offline`` and ``prompt=consent`` (so a refresh token is
-   always returned) and a one-time ``state`` against CSRF.
-2. Google redirects to ``GET /auth/google/callback?code=...&state=...``; the
-   code is exchanged at the token endpoint, and the tokens are stored.
+1. The signed-in user presses "Connect Google" on /settings. The server issues a
+   ``state`` with :class:`ConnectStates`: signed (so it can't be forged),
+   carrying the user's id, short-lived, and single-use. Google's consent page
+   gets ``access_type=offline`` and ``prompt=consent`` (so a refresh token is
+   always returned).
+2. Google redirects to ``GET /auth/google/callback?code=...&state=...``. The
+   state is consumed (a second use fails), its user must be the user signed in
+   on that browser, and the tokens are saved under that user's id.
 3. Every API call asks :meth:`GoogleOAuth.access_token`, which refreshes the
    access token shortly before it expires.
+
+A ``GoogleOAuth`` works on one user's store, so it can only read or write that
+user's tokens.
 
 Tokens are encrypted before they reach the database (Fernet, key in
 ``JARVIS_TOKEN_KEY``), so a leaked service-role key or database dump doesn't
@@ -25,6 +32,7 @@ from urllib.parse import urlencode
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
+from itsdangerous import BadData, URLSafeTimedSerializer
 from loguru import logger
 
 from jarvis.store import Store
@@ -48,8 +56,51 @@ REFRESH_MARGIN = timedelta(seconds=120)
 STATE_TTL_SECS = 600
 
 
+NOT_CONNECTED = "Your Google account isn't connected yet. Connect it on the Settings page: {url}"
+
+
 class NotConnected(Exception):
     """No usable sign-in. ``str(e)`` tells the user what to do."""
+
+
+class ConnectStates:
+    """The ``state`` values of the connect flow: signed, user-bound, short-lived, single-use.
+
+    The value is ``{"u": user_id, "n": nonce}`` signed with the server's session
+    secret, so it can't be forged or pointed at another user. The nonce is
+    remembered when issued and forgotten when used, so a state works once; a
+    restart forgets every outstanding state (the user just presses Connect again).
+    """
+
+    def __init__(self, secret: str, *, ttl_secs: int = STATE_TTL_SECS):
+        if not secret:
+            raise RuntimeError("ConnectStates needs a secret (JARVIS_SESSION_SECRET)")
+        self._serializer = URLSafeTimedSerializer(secret, salt="jarvis-google-connect")
+        self._ttl = ttl_secs
+        self._issued: dict[str, tuple[str, float]] = {}  # nonce -> (user_id, issued at)
+
+    def issue(self, user_id: str) -> str:
+        now = time.monotonic()
+        self._issued = {n: v for n, v in self._issued.items() if now - v[1] < self._ttl}
+        nonce = secrets.token_urlsafe(24)
+        self._issued[nonce] = (user_id, now)
+        return self._serializer.dumps({"u": user_id, "n": nonce})
+
+    def consume(self, state: str) -> str:
+        """The user id the state was issued to. Raises NotConnected if forged, expired or reused."""
+        try:
+            data = self._serializer.loads(state or "", max_age=self._ttl)
+            user_id, nonce = str(data["u"]), str(data["n"])
+        except (BadData, KeyError, TypeError) as e:
+            raise NotConnected(
+                "This connect link is invalid or has expired. Start again from Settings."
+            ) from e
+        issued = self._issued.pop(nonce, None)
+        if issued is None or issued[0] != user_id:
+            raise NotConnected(
+                "This connect link has expired or was already used. Start again from Settings."
+            )
+        return user_id
 
 
 class TokenCipher:
@@ -73,8 +124,8 @@ class TokenCipher:
             return self._fernet.decrypt(value.encode()).decode()
         except InvalidToken as e:
             raise NotConnected(
-                "The stored Google sign-in can't be decrypted (JARVIS_TOKEN_KEY changed?). "
-                "Sign in again."
+                "The stored Google connection can't be decrypted (JARVIS_TOKEN_KEY changed?). "
+                "Connect it again on the Settings page."
             ) from e
 
 
@@ -97,7 +148,6 @@ class GoogleOAuth:
         self._cipher = cipher
         self._sign_in_url = sign_in_url
         self._http = http
-        self._states: dict[str, float] = {}
 
     @classmethod
     def from_env(cls, store: Store, *, redirect_uri: str, sign_in_url: str) -> "GoogleOAuth":
@@ -114,18 +164,21 @@ class GoogleOAuth:
     def configured(self) -> bool:
         return bool(self._client_id and self._client_secret)
 
+    @property
+    def user_id(self) -> str:
+        return self._store.user_id
+
     # Step 1
 
-    def authorization_url(self) -> str:
+    def authorization_url(self, state: str, *, login_hint: str | None = None) -> str:
+        """Google's consent page. ``state`` comes from :meth:`ConnectStates.issue`."""
         if not self.configured:
             raise NotConnected(
                 "Google sign-in isn't set up: add GOOGLE_OAUTH_CLIENT_ID and "
                 "GOOGLE_OAUTH_CLIENT_SECRET to server/.env."
             )
-        now = time.monotonic()
-        self._states = {s: t for s, t in self._states.items() if now - t < STATE_TTL_SECS}
-        state = secrets.token_urlsafe(24)
-        self._states[state] = now
+        if not state:
+            raise ValueError("a state is required")
         params = {
             "client_id": self._client_id,
             "redirect_uri": self._redirect_uri,
@@ -136,15 +189,19 @@ class GoogleOAuth:
             "include_granted_scopes": "true",
             "state": state,
         }
+        if login_hint:
+            params["login_hint"] = login_hint
         return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
 
     # Step 2
 
-    async def handle_callback(self, code: str, state: str) -> str:
-        """Exchange the code for tokens and store them. Returns the account's email."""
-        issued = self._states.pop(state, None)
-        if issued is None or time.monotonic() - issued > STATE_TTL_SECS:
-            raise NotConnected("This sign-in link has expired or was already used. Start again.")
+    async def handle_callback(self, code: str) -> str:
+        """Exchange the code for tokens and store them for this user. Returns the account's email.
+
+        The caller has already consumed the state and checked it belongs to this user.
+        """
+        if not code:
+            raise NotConnected("Google returned no authorization code. Start again from Settings.")
         data = await self._post_token(
             {
                 "code": code,
@@ -155,11 +212,15 @@ class GoogleOAuth:
             }
         )
         if not data.get("refresh_token"):
-            raise NotConnected("Google returned no refresh token. Remove JARVIS's access in your "
-                               "Google account settings and sign in again.")
+            raise NotConnected(
+                "Google returned no refresh token. Remove JARVIS's access in your Google "
+                "account settings and connect again."
+            )
         account = _email_from_id_token(data.get("id_token")) or "unknown"
         await self._save(account, data)
-        logger.info(f"Google connected for {account} (scopes: {data.get('scope')})")
+        logger.info(
+            f"Google connected for user {self.user_id} as {account} (scopes: {data.get('scope')})"
+        )
         return account
 
     # Step 3
@@ -188,15 +249,17 @@ class GoogleOAuth:
         """A valid access token and the account it belongs to; refreshes when needed."""
         row = await self._current_row()
         if row is None:
-            raise NotConnected(f"Google isn't connected yet. Sign in at {self._sign_in_url}")
+            raise NotConnected(NOT_CONNECTED.format(url=self._sign_in_url))
         expires_at = _parse_time(row.get("expires_at"))
         access = self._cipher.decrypt(row.get("access_token"))
         if access and expires_at and expires_at - REFRESH_MARGIN > datetime.now(UTC):
             return access, row["account"]
         refresh = self._cipher.decrypt(row.get("refresh_token"))
         if not refresh:
-            raise NotConnected(f"The Google sign-in has no refresh token. Sign in again at "
-                               f"{self._sign_in_url}")
+            raise NotConnected(
+                "The Google connection has no refresh token. Connect it again on the Settings "
+                f"page: {self._sign_in_url}"
+            )
         try:
             data = await self._post_token(
                 {
@@ -208,8 +271,8 @@ class GoogleOAuth:
             )
         except NotConnected as e:
             raise NotConnected(
-                f"The Google sign-in has expired or was revoked ({e}). Sign in again at "
-                f"{self._sign_in_url}"
+                f"The Google connection has expired or was revoked ({e}). Connect it again "
+                f"on the Settings page: {self._sign_in_url}"
             ) from e
         await self._save(row["account"], data, keep_refresh=refresh)
         return data["access_token"], row["account"]
@@ -228,7 +291,7 @@ class GoogleOAuth:
                 await self._post(GOOGLE_REVOKE_URL, {"token": token})
             except Exception as e:
                 logger.warning(f"Google token revoke failed: {e}")
-        await self._store.delete_oauth_token(PROVIDER, row["account"])
+        await self._store.delete_oauth_token(PROVIDER)
 
     # internals
 

@@ -2,8 +2,9 @@ name: workspace_audio
 
 # Calendar and email by voice: the quick reads Gemini Live calls itself, and a
 # send that is delegated to the worker and comes back for approval.
-# Sign in first (http://localhost:7860/auth/google); before that, the reads
-# answer that Google isn't connected, which also passes the first two turns.
+# Runs as JARVIS_EVAL_USER_EMAIL (server/.env). Connect that user's Google account
+# first (http://localhost:7860/settings); before that, the reads answer that the
+# Google account isn't connected yet, which also passes the first two turns.
 #
 #   uv run bot.py                                            # terminal 1
 #   uv run worker.py                                         # terminal 2

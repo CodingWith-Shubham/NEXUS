@@ -38,18 +38,29 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `uv run python scripts/search.py "question"` runs one live search.
 - **Calendar and email** (`server/skills/workspace/`, Phase 3): one provider interface
   (`server/jarvis/workspace/`), chosen with `[workspace] provider`. Google (Gmail + Calendar) is
-  implemented; Microsoft Graph is a stub. Sign in at `http://localhost:7860/auth/google`.
-  Tokens are encrypted with `JARVIS_TOKEN_KEY` and stored in `oauth_tokens`, and are refreshed
-  automatically. The voice gets `list_events` and `search_email`; everything else
+  implemented; Microsoft Graph is a stub. Each user connects their own Google account on
+  `/settings` (separate from signing in). Tokens are encrypted with `JARVIS_TOKEN_KEY`, stored in
+  `oauth_tokens` under that user, and refreshed automatically. The voice gets `list_events` and `search_email`; everything else
   (`find_free_time`, `create_meeting`, `update_meeting`, `cancel_meeting`, `read_email`,
   `draft_email`, `send_email`, `reply_to_email`) runs in the worker through `delegate_task`.
   Sending, replying, and meeting changes that involve other people need approval. Email content
   is marked untrusted and is never followed as instructions.
-- **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, then
-  `0002_assistant.sql`) create the tables. Run each once, in order, in the Supabase SQL editor.
-  Then `uv run python scripts/check_store.py` checks every store operation against Supabase.
+- **Accounts** (`server/jarvis/web/`, `server/jarvis/accounts.py`): invite-only sign-in with
+  Google (openid, email, profile) on the bot's own server. `ALLOWED_EMAILS` is the invite list.
+  The session is a signed, HttpOnly, SameSite=Lax cookie (Secure when `[web] public_url` is
+  https) that lasts `[web] session_hours`. A gate in front of every route, including Pipecat's
+  `/start`, `/api/offer` and `/client`, sends signed-out visitors to `/login` (pages) or answers
+  401 (APIs). The user who starts a voice session is taken from the cookie, never from the
+  request body, and every tool reads it from the session (`ctx.user_id`); no tool takes a
+  `user_id` argument. The store is bound to one user and filters every query by `user_id`; the
+  worker runs each task as its owner.
+- **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, `0002_assistant.sql`,
+  then `0003_multi_user.sql`) create the tables. Run each once, in order, in the Supabase SQL
+  editor. Then `uv run python scripts/check_store.py you@example.com` checks every store
+  operation against Supabase as that user, and that another user can't see the rows.
 
-Run JARVIS in two terminals from `server/`: `uv run bot.py` and `uv run worker.py`.
+Run JARVIS in two terminals from `server/`: `uv run bot.py` and `uv run worker.py`, then open
+`http://localhost:7860` (use `localhost`, not `127.0.0.1`) and sign in.
 Unit tests: `uv run pytest`. Spoken checks: `evals/phase2_audio.yaml`, then
 `evals/phase2_continuity_audio.yaml` (run with `uv run pipecat eval run <file> -v`).
 
@@ -73,8 +84,12 @@ Unit tests: `uv run pytest`. Spoken checks: `evals/phase2_audio.yaml`, then
 
    ```bash
    cp .env.example .env
-   # Edit .env and add your API keys
+   # Edit .env and add your API keys, ALLOWED_EMAILS and JARVIS_SESSION_SECRET
    ```
+
+   On the Google OAuth client (Google Cloud Console > Credentials), add both authorized
+   redirect URIs: `http://localhost:7860/auth/login/callback` (sign-in) and
+   `http://localhost:7860/auth/google/callback` (Gmail + Calendar).
 
 4. **Run the bot**:
 
@@ -89,6 +104,10 @@ Unit tests: `uv run pytest`. Spoken checks: `evals/phase2_audio.yaml`, then
 ## Testing with evals
 
 This project includes behavioral evals: scripted conversations that drive the bot headless — no live call needed. Starter scenarios live in `server/evals/`; edit them as your bot takes shape and copy them to add more.
+
+The eval harness can't sign in, so the `/ws` route it uses is closed by default. To run evals,
+set `JARVIS_EVAL_USER_EMAIL` in `server/.env` to a JARVIS user (one who has signed in once);
+eval sessions then run as that user, and only from this machine. Leave it empty otherwise.
 
 From `server/`, run the bot, then drive scenarios against it from a second terminal (the bot stays up across runs):
 

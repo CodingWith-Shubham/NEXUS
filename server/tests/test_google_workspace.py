@@ -10,10 +10,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 from cryptography.fernet import Fernet
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from jarvis.auth_routes import register_auth_routes
 from jarvis.oauth import GOOGLE_SCOPES, GoogleOAuth, NotConnected, TokenCipher
 from jarvis.store import MemoryStore
 from jarvis.workspace import WorkspaceError
@@ -67,37 +64,34 @@ def oauth_for(google, store=None, key=None):
 
 def test_authorization_url_has_offline_consent_and_state():
     oauth, _ = oauth_for(Google())
-    q = parse_qs(urlparse(oauth.authorization_url()).query)
+    q = parse_qs(urlparse(oauth.authorization_url("signed-state", login_hint="me@x.com")).query)
     assert q["redirect_uri"] == [REDIRECT] and q["response_type"] == ["code"]
     assert q["access_type"] == ["offline"] and q["prompt"] == ["consent"]
     assert "https://www.googleapis.com/auth/gmail.compose" in q["scope"][0].split()
-    assert len(q["state"][0]) > 20
+    assert q["state"] == ["signed-state"] and q["login_hint"] == ["me@x.com"]
 
 
-async def test_callback_stores_encrypted_tokens_and_rejects_replay():
+async def test_callback_stores_encrypted_tokens():
     google, store = Google(), MemoryStore()
     oauth, _ = oauth_for(google, store)
-    state = parse_qs(urlparse(oauth.authorization_url()).query)["state"][0]
-    assert await oauth.handle_callback("code-1", state) == "me@gmail.com"
+    assert await oauth.handle_callback("code-1") == "me@gmail.com"
     row = store.oauth[("google", "me@gmail.com")]
     assert row["access_token"] != "at-1" and row["refresh_token"] != "rt-1"  # encrypted
     assert "rt-1" not in json.dumps(row)
     assert await oauth.access_token() == ("at-1", "me@gmail.com")
-    with pytest.raises(NotConnected, match="expired or was already used"):
-        await oauth.handle_callback("code-1", state)
+    assert row["user_id"] == store.user_id
 
 
-async def test_bad_state_rejected():
+async def test_missing_code_rejected():
     oauth, _ = oauth_for(Google())
     with pytest.raises(NotConnected):
-        await oauth.handle_callback("code", "forged-state")
+        await oauth.handle_callback("")
 
 
 async def test_refresh_when_expiring_keeps_refresh_token():
     google, store = Google(), MemoryStore()
     oauth, _ = oauth_for(google, store)
-    state = parse_qs(urlparse(oauth.authorization_url()).query)["state"][0]
-    await oauth.handle_callback("code", state)
+    await oauth.handle_callback("code")
     store.oauth[("google", "me@gmail.com")]["expires_at"] = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
     assert await oauth.access_token() == ("at-2", "me@gmail.com")
     refresh = parse_qs(google.requests[-1].content.decode())
@@ -111,17 +105,16 @@ async def test_refresh_when_expiring_keeps_refresh_token():
 async def test_revoked_refresh_token_asks_to_sign_in_again():
     google, store = Google(), MemoryStore()
     oauth, _ = oauth_for(google, store)
-    state = parse_qs(urlparse(oauth.authorization_url()).query)["state"][0]
-    await oauth.handle_callback("code", state)
+    await oauth.handle_callback("code")
     store.oauth[("google", "me@gmail.com")]["expires_at"] = datetime.now(UTC).isoformat()
     google.token_status = 400
-    with pytest.raises(NotConnected, match="Sign in again at http://localhost:7860/auth/google"):
+    with pytest.raises(NotConnected, match="Connect it again on the Settings page: http://localhost:7860/auth/google"):
         await oauth.access_token()
 
 
-async def test_not_connected_message_points_to_sign_in():
+async def test_not_connected_message_points_to_settings():
     oauth, _ = oauth_for(Google())
-    with pytest.raises(NotConnected, match="http://localhost:7860/auth/google"):
+    with pytest.raises(NotConnected, match="Your Google account isn't connected yet.*http://localhost:7860/auth/google"):
         await oauth.access_token()
 
 
@@ -130,24 +123,6 @@ def test_missing_token_key_explains_how_to_make_one():
         TokenCipher(None)
 
 
-def test_auth_routes_redirect_and_callback():
-    google, store = Google(), MemoryStore()
-    oauth, _ = oauth_for(google, store)
-
-    async def get_oauth():
-        return oauth
-
-    app = FastAPI()
-    register_auth_routes(app, get_oauth)
-    client = TestClient(app)
-    r = client.get("/auth/google", follow_redirects=False)
-    assert r.status_code == 307 and r.headers["location"].startswith("https://accounts.google.com/")
-    state = parse_qs(urlparse(r.headers["location"]).query)["state"][0]
-    r = client.get(f"/auth/google/callback?code=c&state={state}")
-    assert r.status_code == 200 and "me@gmail.com" in r.text
-    assert client.get("/auth/status").json() == {"google": "me@gmail.com"}
-    assert client.get("/auth/google/callback?error=access_denied").status_code == 400
-
 
 # Calendar and Gmail REST
 
@@ -155,8 +130,7 @@ def test_auth_routes_redirect_and_callback():
 async def connected():
     google, store = Google(), MemoryStore()
     oauth, http = oauth_for(google, store)
-    state = parse_qs(urlparse(oauth.authorization_url()).query)["state"][0]
-    await oauth.handle_callback("code", state)
+    await oauth.handle_callback("code")
     return google, GoogleWorkspace(oauth, timezone=TZ, http=http)
 
 
@@ -245,7 +219,7 @@ async def test_not_connected_is_a_workspace_error():
     google = Google()
     oauth, http = oauth_for(google)
     workspace = GoogleWorkspace(oauth, timezone=TZ, http=http)
-    with pytest.raises(WorkspaceError, match="Sign in at"):
+    with pytest.raises(WorkspaceError, match="isn't connected yet"):
         await workspace.list_events(datetime.now(TZ), datetime.now(TZ) + timedelta(days=1))
 
 
@@ -261,17 +235,15 @@ async def test_sign_in_from_another_oauth_client_counts_as_not_connected():
     google, store = Google(), MemoryStore()
     key = Fernet.generate_key().decode()
     old, _ = oauth_for(google, store, key)
-    state = parse_qs(urlparse(old.authorization_url()).query)["state"][0]
-    await old.handle_callback("code", state)
+    await old.handle_callback("code")
     assert await old.account() == "me@gmail.com"
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(google.handler))
     new = GoogleOAuth(client_id="new-cid", client_secret="s2", redirect_uri=REDIRECT, store=store,
                       cipher=TokenCipher(key), sign_in_url="http://localhost:7860/auth/google", http=http)
     assert await new.account() is None
-    with pytest.raises(NotConnected, match="Sign in at"):
+    with pytest.raises(NotConnected, match="isn't connected yet"):
         await new.access_token()
     # Signing in with the new client replaces the old sign-in.
-    state = parse_qs(urlparse(new.authorization_url()).query)["state"][0]
-    await new.handle_callback("code", state)
+    await new.handle_callback("code")
     assert await new.account() == "me@gmail.com"

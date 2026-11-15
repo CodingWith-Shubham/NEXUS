@@ -2,9 +2,10 @@
 
     uv run worker.py
 
-It polls Supabase for tasks queued by delegate_task, runs each on the worker
-model chain ([worker] models in jarvis.toml; Nemotron via OpenRouter by default),
-and writes the result back; the voice bot announces it.
+It polls Supabase for tasks queued by delegate_task (any user's), runs each on
+the worker model chain ([worker] models in jarvis.toml; Nemotron via OpenRouter
+by default) as the task's owner, and writes the result back under that user; the
+voice bot announces it in that user's next or current session.
 """
 
 import asyncio
@@ -13,16 +14,16 @@ from dotenv import load_dotenv
 
 from jarvis.app import build_core
 from jarvis.prompts import worker_instruction
-from jarvis.store import SupabaseStore
+from jarvis.store import SupabaseDatabase
 from jarvis.worker import TaskWorker
 
 
 async def main() -> None:
     load_dotenv(override=True)
     core = build_core()
-    store = await SupabaseStore.from_env()
+    database = await SupabaseDatabase.from_env()
     worker = TaskWorker(
-        store,
+        database,
         core.registry,
         llm=core.llm,
         system_instruction=worker_instruction(core.packs),

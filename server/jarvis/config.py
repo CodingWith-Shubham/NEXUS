@@ -58,6 +58,24 @@ class ResearchConfig:
 
 
 @dataclass(frozen=True)
+class SalesConfig:
+    """[sales] and [contacts] in jarvis.toml (skills/sales)."""
+
+    max_searches: int = 6  # per lead search
+    max_pages: int = 12
+    time_budget_secs: int = 360
+    results_per_search: int = 5
+    pages_per_query: int = 2
+    max_signal_age_days: int = 183  # older signals are dropped (about six months)
+    page_chars: int = 8000
+    extract_batch_chars: int = 24000
+    contacts_provider: str = "signalhire"  # "signalhire", "lusha" (stub) or "none"
+    # Public base URL the provider can call back (e.g. an ngrok https URL). Empty: look
+    # contacts up synchronously instead (SignalHire's withoutWaterfall mode).
+    contacts_callback_base_url: str = ""
+
+
+@dataclass(frozen=True)
 class Config:
     skills: list[str]
     timezone: str = ""  # IANA name; empty means the server's local zone
@@ -85,6 +103,7 @@ class Config:
     public_url: str = "http://localhost:7860"  # https:// turns on Secure cookies
     session_hours: float = 168.0  # a sign-in lasts this long, then the user signs in again
     research: ResearchConfig = field(default_factory=ResearchConfig)
+    sales: SalesConfig = field(default_factory=SalesConfig)
 
     def tz(self) -> tzinfo | None:
         """The user's time zone, or None for the server's local zone."""
@@ -125,6 +144,22 @@ def _research_config(data: dict) -> ResearchConfig:
     )
 
 
+def _sales_config(sales: dict, contacts: dict) -> SalesConfig:
+    d = SalesConfig()
+    return SalesConfig(
+        max_searches=max(1, int(sales.get("max_searches", d.max_searches))),
+        max_pages=max(1, int(sales.get("max_pages", d.max_pages))),
+        time_budget_secs=max(30, int(sales.get("time_budget_secs", d.time_budget_secs))),
+        results_per_search=int(sales.get("results_per_search", d.results_per_search)),
+        pages_per_query=int(sales.get("pages_per_query", d.pages_per_query)),
+        max_signal_age_days=int(sales.get("max_signal_age_days", d.max_signal_age_days)),
+        page_chars=int(sales.get("page_chars", d.page_chars)),
+        extract_batch_chars=int(sales.get("extract_batch_chars", d.extract_batch_chars)),
+        contacts_provider=str(contacts.get("provider", d.contacts_provider)).strip().lower(),
+        contacts_callback_base_url=str(contacts.get("callback_base_url", "")).strip().rstrip("/"),
+    )
+
+
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
     data = tomllib.loads(path.read_text(encoding="utf-8"))
     user = data.get("user", {})
@@ -159,4 +194,5 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> Config:
         public_url=str(web.get("public_url", "http://localhost:7860")).rstrip("/"),
         session_hours=float(web.get("session_hours", 168)),
         research=_research_config(data.get("research", {})),
+        sales=_sales_config(data.get("sales", {}), data.get("contacts", {})),
     )

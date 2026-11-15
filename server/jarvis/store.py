@@ -15,7 +15,12 @@ Two layers:
 
 In ``SupabaseStore`` that rule lives in four helpers (``_select``, ``_insert``,
 ``_update``, ``_delete``, plus ``_rpc`` for the SQL functions); no method
-touches ``self._db.table(...)`` directly. ``tests/test_user_scoping.py`` runs
+touches ``self._db.table(...)`` directly.
+
+Skill packs keep their own rows (leads, schedules, ...) in the tables listed in
+:data:`PACK_TABLES`, through the store's generic ``find`` / ``insert`` /
+``update`` / ``delete``, which go through the same helpers: a pack can't
+reach another user's rows or a core table that way. ``tests/test_user_scoping.py`` runs
 every method against a recording client and fails if one query slips through
 without the filter.
 
@@ -43,8 +48,34 @@ REPORT_LIST_COLUMNS = (
 class ActiveReportExists(Exception):
     """The user already has a queued or running research job (one at a time)."""
 
-# The tables that belong to a user; each has a NOT NULL user_id (0003, 0004 migrations).
+
+def _pack_table(table: str) -> str:
+    if table not in PACK_TABLES:
+        raise ValueError(f"{table!r} isn't a pack table (see PACK_TABLES)")
+    return table
+
+
+def _bad_id(where: dict | None) -> bool:
+    """An id filter that can't match a UUID column (so the query can't succeed)."""
+    return any(
+        (k == "id" or k.endswith("_id")) and isinstance(v, str) and not _is_uuid(v)
+        for k, v in (where or {}).items()
+    )
+
+# Tables skill packs and the scheduler use through find/insert/update/delete
+# (0005_sales.sql). Each has a NOT NULL user_id like the core tables.
+PACK_TABLES = (
+    "scheduled_jobs",
+    "sales_profiles",
+    "leads",
+    "lead_evidence",
+    "contact_lookups",
+    "lead_activity",
+)
+
+# The tables that belong to a user; each has a NOT NULL user_id (0003-0005 migrations).
 USER_TABLES = (
+    *PACK_TABLES,
     "reports",
     "memory",
     "notes",
@@ -171,6 +202,27 @@ class Store(Protocol):
 
     async def reports_finished_since(self, since: str) -> list[Row]: ...
 
+    # pack tables (PACK_TABLES): generic, still scoped to this user
+    async def find(
+        self,
+        table: str,
+        *,
+        where: dict | None = None,
+        where_in: dict[str, list] | None = None,
+        at_least: dict | None = None,
+        contains_text: tuple[str, str] | None = None,
+        order: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[Row]:
+        """Rows matching every filter. ``where`` values of None match NULL."""
+        ...
+
+    async def find_one(self, table: str, **filters) -> Row | None: ...
+    async def insert(self, table: str, row: dict) -> Row: ...
+    async def update(self, table: str, values: dict, *, where: dict) -> list[Row]: ...
+    async def delete(self, table: str, *, where: dict) -> None: ...
+
 
 class Database(Protocol):
     """The connection: hands out per-user stores, and holds the cross-user operations."""
@@ -179,6 +231,10 @@ class Database(Protocol):
 
     async def claim_next_task(self, worker_id: str) -> Row | None:
         """The oldest queued task of any user, now running. Its ``user_id`` says whose."""
+        ...
+
+    async def claim_due_schedule(self, worker_id: str) -> Row | None:
+        """One active schedule of any user whose next run is due, claimed for this worker."""
         ...
 
     # users
@@ -215,6 +271,11 @@ class SupabaseDatabase:
     async def claim_next_task(self, worker_id: str) -> Row | None:
         # Cross-user by design: one worker serves everyone. The row carries user_id.
         res = await self._db.rpc("claim_next_task", {"p_worker_id": worker_id}).execute()
+        return res.data[0] if res.data else None
+
+    async def claim_due_schedule(self, worker_id: str) -> Row | None:
+        # Cross-user by design, like claim_next_task. The row carries user_id.
+        res = await self._db.rpc("claim_due_schedule", {"p_worker_id": worker_id}).execute()
         return res.data[0] if res.data else None
 
     # users
@@ -592,6 +653,64 @@ class SupabaseStore:
         )
         return res.data
 
+    # pack tables
+
+    @staticmethod
+    def _filtered(q, where: dict | None):
+        for column, value in (where or {}).items():
+            q = q.is_(column, "null") if value is None else q.eq(column, value)
+        return q
+
+    async def find(
+        self,
+        table: str,
+        *,
+        where: dict | None = None,
+        where_in: dict[str, list] | None = None,
+        at_least: dict | None = None,
+        contains_text: tuple[str, str] | None = None,
+        order: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[Row]:
+        if _bad_id(where):
+            return []
+        q = self._filtered(self._select(_pack_table(table)), where)
+        for column, values in (where_in or {}).items():
+            q = q.in_(column, list(values))
+        for column, value in (at_least or {}).items():
+            q = q.gte(column, value)
+        if contains_text and contains_text[1]:
+            q = q.ilike(contains_text[0], f"%{_escape_like(contains_text[1])}%")
+        if order:
+            q = q.order(order, desc=desc)
+        if limit:
+            q = q.limit(limit)
+        return (await q.execute()).data
+
+    async def find_one(self, table: str, **filters) -> Row | None:
+        rows = await self.find(table, where=filters, limit=1)
+        return rows[0] if rows else None
+
+    async def insert(self, table: str, row: dict) -> Row:
+        res = await self._insert(_pack_table(table), row).execute()
+        return res.data[0]
+
+    async def update(self, table: str, values: dict, *, where: dict) -> list[Row]:
+        if not where:
+            raise ValueError("update needs a where filter")
+        if _bad_id(where):
+            return []
+        q = self._filtered(self._update(_pack_table(table), values), where)
+        return (await q.execute()).data
+
+    async def delete(self, table: str, *, where: dict) -> None:
+        if not where:
+            raise ValueError("delete needs a where filter")
+        if _bad_id(where):
+            return
+        await self._filtered(self._delete(_pack_table(table)), where).execute()
+
 
 def _escape_like(text: str) -> str:
     """Make user text match literally in a LIKE/ILIKE pattern."""
@@ -619,6 +738,7 @@ class MemoryDatabase:
         self.oauth: dict[tuple[str, str], Row] = {}  # (user_id, provider) -> row
         self.users: dict[str, Row] = {}
         self.reports: dict[str, Row] = {}
+        self.tables: dict[str, list[Row]] = {t: [] for t in PACK_TABLES}
         self._seq = itertools.count()
 
     def stamp(self) -> str:
@@ -642,6 +762,24 @@ class MemoryDatabase:
             started_at=self.stamp(),
             attempts=row["attempts"] + 1,
         )
+        return dict(row)
+
+    async def claim_due_schedule(self, worker_id: str) -> Row | None:
+        now = datetime.now(UTC)
+        due = []
+        for row in self.tables["scheduled_jobs"]:
+            if row.get("status") != "active" or not row.get("next_run_at"):
+                continue
+            if _as_dt(row["next_run_at"]) > now:
+                continue
+            claimed = row.get("claimed_at")
+            if claimed and (now - _as_dt(claimed)).total_seconds() < 600:
+                continue
+            due.append(row)
+        if not due:
+            return None
+        row = min(due, key=lambda r: _as_dt(r["next_run_at"]))
+        row.update(claimed_by=worker_id, claimed_at=now.isoformat())
         return dict(row)
 
     # users
@@ -1050,3 +1188,74 @@ class MemoryStore:
             if r["status"] in FINISHED_REPORT_STATUSES and (r["finished_at"] or "") > since
         ]
         return [dict(r) for r in sorted(rows, key=lambda r: r["finished_at"])]
+
+    # pack tables
+
+    def _match(self, row: Row, where, where_in, at_least, contains_text) -> bool:
+        if row["user_id"] != self.user_id:
+            return False
+        for column, value in (where or {}).items():
+            if row.get(column) != value:
+                return False
+        for column, values in (where_in or {}).items():
+            if row.get(column) not in values:
+                return False
+        for column, value in (at_least or {}).items():
+            if row.get(column) is None or row[column] < value:
+                return False
+        if contains_text and contains_text[1]:
+            if contains_text[1].lower() not in str(row.get(contains_text[0]) or "").lower():
+                return False
+        return True
+
+    async def find(
+        self,
+        table: str,
+        *,
+        where: dict | None = None,
+        where_in: dict[str, list] | None = None,
+        at_least: dict | None = None,
+        contains_text: tuple[str, str] | None = None,
+        order: str | None = None,
+        desc: bool = False,
+        limit: int | None = None,
+    ) -> list[Row]:
+        rows = [r for r in self.db.tables[_pack_table(table)]
+                if self._match(r, where, where_in, at_least, contains_text)]
+        if order:
+            present = sorted((r for r in rows if r.get(order) is not None),
+                             key=lambda r: r[order], reverse=desc)
+            rows = present + [r for r in rows if r.get(order) is None]  # NULLs last, like Postgres
+        return [dict(r) for r in (rows[:limit] if limit else rows)]
+
+    async def find_one(self, table: str, **filters) -> Row | None:
+        rows = await self.find(table, where=filters, limit=1)
+        return rows[0] if rows else None
+
+    async def insert(self, table: str, row: dict) -> Row:
+        now = self._stamp()
+        stored = {"id": str(uuid.uuid4()), "created_at": now, "updated_at": now, **row,
+                  "user_id": self.user_id}
+        self.db.tables[_pack_table(table)].append(stored)
+        return dict(stored)
+
+    async def update(self, table: str, values: dict, *, where: dict) -> list[Row]:
+        if not where:
+            raise ValueError("update needs a where filter")
+        changed = []
+        for row in self.db.tables[_pack_table(table)]:
+            if self._match(row, where, None, None, None):
+                row.update({k: v for k, v in values.items() if k != "user_id"})
+                changed.append(dict(row))
+        return changed
+
+    async def delete(self, table: str, *, where: dict) -> None:
+        if not where:
+            raise ValueError("delete needs a where filter")
+        rows = self.db.tables[_pack_table(table)]
+        rows[:] = [r for r in rows if not self._match(r, where, None, None, None)]
+
+
+def _as_dt(value) -> datetime:
+    dt = datetime.fromisoformat(str(value).split("#")[0].replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)

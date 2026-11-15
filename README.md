@@ -58,6 +58,21 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   worker model is down the job fails with a clear message instead of writing from memory.
   `uv run python scripts/research.py you@example.com "topic" --depth quick` runs one live job
   without the worker.
+- **Sales** (`server/skills/sales/`, Phase 5): each user's sales profile (company, target
+  industries and regions, buying signals with points, score thresholds, job titles, email tone)
+  is edited on `/sales/profile` or seeded with `scripts/seed_sales_profile.py`; no company
+  knowledge is in code. `find_leads` runs a worker job on the same search-and-read flow as deep
+  research (`server/jarvis/reading/`): every signal is checked against the fetched page (excerpt,
+  company name, a date within six months), leads are scored from the profile, de-duplicated by
+  normalised name and domain, and shown on `/leads` with their evidence. Contacts come from the
+  provider in `[contacts]` (SignalHire; Lusha is a stub): each lookup needs the user's approval,
+  only runs for approved leads, and its credits are tracked per user. Without a public
+  `callback_base_url` SignalHire is asked synchronously; with one, results arrive at
+  `/webhooks/contacts/signalhire/...` (signed URL, matched by request id). `draft_outreach` writes
+  an email under 120 words that opens with the verified signal and its source, plus a LinkedIn
+  note to copy; sending goes through `send_email` and the approval gate and marks the lead
+  contacted. Scheduled sweeps (`scheduled_jobs`, run by the worker's scheduler) only find and
+  save leads; they're announced at the next session.
 - **Accounts** (`server/jarvis/web/`, `server/jarvis/accounts.py`): invite-only sign-in with
   Google (openid, email, profile) on the bot's own server. `ALLOWED_EMAILS` is the invite list.
   The session is a signed, HttpOnly, SameSite=Lax cookie (Secure when `[web] public_url` is
@@ -68,7 +83,7 @@ A Pipecat AI voice agent built with a realtime speech-to-speech pipeline.
   `user_id` argument. The store is bound to one user and filters every query by `user_id`; the
   worker runs each task as its owner.
 - **Database**: the migrations in `supabase/migrations/` (`0001_core.sql`, `0002_assistant.sql`,
-  `0003_multi_user.sql`, then `0004_research.sql`) create the tables. Run each once, in order, in the Supabase SQL
+  `0003_multi_user.sql`, `0004_research.sql`, then `0005_sales.sql`) create the tables. Run each once, in order, in the Supabase SQL
   editor. Then `uv run python scripts/check_store.py you@example.com` checks every store
   operation against Supabase as that user, and that another user can't see the rows.
 

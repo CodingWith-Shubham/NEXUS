@@ -14,6 +14,7 @@ Pipecat's development runner adds (``/start``, ``/api/offer``,
 ``/sessions/...``, ``/client``, ``/ws``, ...). Deny by default:
 
 - Only :data:`PUBLIC_PATHS` (the login page and the Google login round trip)
+  and ``/webhooks/...`` (provider callbacks, each verified by its own route)
   work without a session. Anything else gets a redirect to /login (a browser
   asking for a page) or 401.
 - Every state-changing request (POST, PUT, PATCH, DELETE) must come from this
@@ -52,6 +53,9 @@ SESSION_COOKIE = "jarvis_session"
 
 # Reachable without a session.
 PUBLIC_PATHS = frozenset({"/login", "/auth/login", "/auth/login/callback", "/favicon.ico"})
+# Called by outside services (no cookie, no browser Origin). Each webhook route must
+# verify the request itself (e.g. a signed token in its URL).
+WEBHOOK_PREFIX = "/webhooks/"
 
 # Where the eval harness connects (Pipecat runner's WebSocket routes).
 EVAL_WS_PREFIX = "/ws"
@@ -202,14 +206,19 @@ class AuthGate:
     async def _http(self, scope: Scope, receive: Receive, send: Send) -> None:
         path, method = scope["path"], scope["method"]
         user = session_user(scope.get("session"), self.settings)
+        webhook = path.startswith(WEBHOOK_PREFIX)
 
-        if user is None and path not in PUBLIC_PATHS:
+        if user is None and path not in PUBLIC_PATHS and not webhook:
             if method in ("GET", "HEAD") and "text/html" in (_header(scope, b"accept") or ""):
                 response = RedirectResponse("/login", status_code=302)
             else:
                 response = JSONResponse({"detail": "Sign in required."}, status_code=401)
             logger.debug(f"Refused unauthenticated {method} {path}")
             await response(scope, receive, send)
+            return
+
+        if webhook:
+            await self._run_as(None, scope, receive, send)  # never as a signed-in user
             return
 
         if method not in SAFE_METHODS and not same_origin(scope, self.settings):

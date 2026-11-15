@@ -300,13 +300,25 @@ async def test_every_supabase_store_query_is_scoped_to_the_user():
         "latest_report": ("done",),
         "update_report": (some_id, {"progress": 5, "user_id": "evil"}, ),
         "reports_finished_since": ("2026-01-01T00:00:00+00:00",),
+        "find": ("leads",),
+        "find_one": ("leads",),
+        "insert": ("leads", {"company_name": "X", "user_id": "evil"}),
+        "update": ("leads", {"status": "approved", "user_id": "evil"}),
+        "delete": ("lead_activity",),
     }
     public = {n for n in dir(SupabaseStore) if not n.startswith("_") and callable(getattr(store, n))}
     assert public == set(calls), "add new store methods to this test"
 
     for name, args in calls.items():
         before = len(client.log)
-        await getattr(store, name)(*args)
+        kwargs = {
+            "find": {"where": {"status": "new"}, "where_in": {"status": ["new"]},
+                     "at_least": {"score": 1}, "contains_text": ("company_name", "x"),
+                     "order": "score", "limit": 5},
+            "update": {"where": {"id": some_id}},
+            "delete": {"where": {"id": some_id}},
+        }.get(name, {})
+        await getattr(store, name)(*args, **kwargs)
         assert len(client.log) > before, name
 
     for q in client.log:

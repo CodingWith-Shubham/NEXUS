@@ -49,6 +49,14 @@ def host_of(url: str | None) -> str:
         return ""
 
 
+def _local_path(value: str) -> bool:
+    """A path on this site (so a form can't redirect elsewhere): /x/y, never //host or a URL."""
+    if not value or len(value) > 300 or not value.startswith("/") or value.startswith("//"):
+        return False
+    path = value.split("?")[0]
+    return "\\" not in value and ":" not in path
+
+
 def _is_uuid(value: str) -> bool:
     try:
         uuid.UUID(value)
@@ -188,12 +196,16 @@ def register_report_routes(
             status_code=303,
         )
 
-    async def decide(request: Request, action_id: str, tool: str, csrf_token: str, back: str):
+    async def decide(request: Request, action_id: str, tool: str, csrf_token: str, back: str,
+                     next_path: str = ""):
         user = request_user(request)
         if not check_csrf(user, csrf_token):
             return page(request, "message.html", 403, user=user, title="Request refused",
                         text="The form expired. Reload and try again.")
-        target = f"/reports/{back}" if _is_uuid(back) else "/reports"
+        if _local_path(next_path):
+            target = next_path
+        else:
+            target = f"/reports/{back}" if _is_uuid(back) else "/reports"
         ctx = tool_ctx(await user_store(user.id), "voice")
         if ctx is None or not _is_uuid(action_id):
             return RedirectResponse(f"{target}?notice=failed", status_code=303)
@@ -206,10 +218,10 @@ def register_report_routes(
 
     @app.post("/actions/{action_id}/confirm", include_in_schema=False)
     async def confirm(request: Request, action_id: str, csrf_token: str = Form(""),
-                      report_id: str = Form("")):
-        return await decide(request, action_id, "confirm_action", csrf_token, report_id)
+                      report_id: str = Form(""), next: str = Form("")):
+        return await decide(request, action_id, "confirm_action", csrf_token, report_id, next)
 
     @app.post("/actions/{action_id}/cancel", include_in_schema=False)
     async def cancel(request: Request, action_id: str, csrf_token: str = Form(""),
-                     report_id: str = Form("")):
-        return await decide(request, action_id, "cancel_action", csrf_token, report_id)
+                     report_id: str = Form(""), next: str = Form("")):
+        return await decide(request, action_id, "cancel_action", csrf_token, report_id, next)

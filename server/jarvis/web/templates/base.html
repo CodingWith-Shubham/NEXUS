@@ -76,7 +76,8 @@
   <a class="brand" href="/">JARVIS</a>
   <nav>
     <span class="who">{{ user.email }}</span>
-    <a href="/reports">Reports</a>
+    {% for href, label in pack_nav or [] %}<a href="{{ href }}">{{ label }}</a>
+    {% endfor %}<a href="/reports">Reports</a>
     <a href="/settings">Settings</a>
     <form class="inline" method="post" action="/logout">
       <input type="hidden" name="csrf_token" value="{{ user.csrf }}">

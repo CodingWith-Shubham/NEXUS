@@ -11,11 +11,11 @@ from jarvis.announcer import Announcer
 from jarvis.app import build_core
 from jarvis.config import Config, ResearchConfig, ResearchLimits
 from jarvis.llm import AllModelsFailed, ChatReply
+from jarvis.reading.fetch import FetchFailed, Page, looks_like_injection
 from jarvis.search_providers import SearchHit, SearchUnavailable
 from jarvis.skills import ToolContext
 from jarvis.store import MemoryDatabase
 from jarvis.worker import TaskWorker
-from skills.research.fetch import FetchFailed, Page, looks_like_injection
 from skills.research.pipeline import render_text
 
 INJECTION = (

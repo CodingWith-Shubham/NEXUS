@@ -35,6 +35,10 @@ conversation. Cover what was discussed, what was decided or done, and anything l
 promised for later. Write in the third person ("The user asked..."). Plain text only.
 Don't record temporary technical problems (an account not connected yet, search or a service
 unavailable, errors) as open items; they are usually fixed by the next conversation.
+Don't record the state of the user's setup either (whether an account is connected, a profile
+is configured, a setting is on): it is checked fresh at the start of every conversation, and
+an old note about it is often wrong. Only record that something is pending if a tool actually
+queued it; things JARVIS merely said it would do are not open items.
 
 If nothing of substance happened (only greetings or a test), reply with exactly: NOTHING"""
 

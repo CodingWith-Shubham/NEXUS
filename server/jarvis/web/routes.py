@@ -29,10 +29,12 @@ from typing import Any, Protocol
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, FileSystemLoader
 from loguru import logger
 
 from jarvis.accounts import SignInRefused, sign_in
 from jarvis.oauth import ConnectStates, GoogleOAuth, NotConnected
+from jarvis.skills import ToolContext
 from jarvis.store import Database, Store
 from jarvis.web.auth import WebSettings, check_csrf, request_user, session_user, start_session
 from jarvis.web.reports import register_report_routes
@@ -84,6 +86,51 @@ class WebDeps:
     # The JARVIS core (registry, config), built on first use: the report pages run
     # send_email and the approval gate through it. None leaves those buttons off.
     core: Callable[[], Any] | None = None
+
+
+@dataclass
+class WebContext:
+    """What a skill pack's ``register_web`` gets: the app and the helpers its pages need."""
+
+    app: FastAPI
+    deps: WebDeps
+    templates: Jinja2Templates
+    user_store: Callable[[str], Awaitable[Store]]
+    google_account: Callable[[Store], Awaitable[str | None]]
+
+    @property
+    def settings(self) -> WebSettings:
+        return self.deps.settings
+
+    def add_templates(self, directory: str | Path) -> None:
+        """Let the pack's templates extend base.html (found alongside the core's)."""
+        loader = self.templates.env.loader
+        self.templates.env.loader = ChoiceLoader([loader, FileSystemLoader(str(directory))])  # type: ignore[list-item]
+
+    def add_nav(self, href: str, label: str) -> None:
+        """A link in the header of every signed-in page."""
+        links = self.templates.env.globals.setdefault("pack_nav", [])
+        if (href, label) not in links:
+            links.append((href, label))
+
+    def page(self, request: Request, name: str, status: int = 200, **context) -> HTMLResponse:
+        return self.templates.TemplateResponse(request, name, context, status_code=status)
+
+    def message(self, request: Request, title: str, text: str, status: int = 200) -> HTMLResponse:
+        return self.page(request, "message.html", status, title=title, text=text,
+                         user=session_user(request.session, self.settings))
+
+    def core(self) -> Any:
+        return self.deps.core() if self.deps.core else None
+
+    def tool_ctx(self, store: Store, source: str) -> ToolContext | None:
+        """A ToolContext for running tools (and the approval gate) from a page."""
+        built = self.core()
+        if built is None:
+            return None
+        return ToolContext(store=store, registry=built.registry, source=source,
+                           config=built.config, timezone=built.config.tz(),
+                           llm=built.llm, search=built.search)
 
 
 def register_routes(app: FastAPI, deps: WebDeps) -> None:
@@ -272,3 +319,12 @@ def register_routes(app: FastAPI, deps: WebDeps) -> None:
         google_account=google_account,
         public_url=settings.public_url,
     )
+
+    # Skill packs' own pages and webhooks.
+    built = deps.core() if deps.core else None
+    if built is not None:
+        web = WebContext(app=app, deps=deps, templates=TEMPLATES, user_store=user_store,
+                         google_account=google_account)
+        for pack in built.packs:
+            if pack.register_web is not None:
+                pack.register_web(web)

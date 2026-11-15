@@ -155,6 +155,9 @@ class SkillPack:
     session_context: SessionContextFn | None = None
     # Background task kinds this pack runs itself (see the module docstring).
     task_handlers: dict[str, TaskHandler] = field(default_factory=dict)
+    # Adds the pack's pages and webhooks to the web app: called once at startup with
+    # a jarvis.web.routes.WebContext. Pages sit behind sign-in; /webhooks/... don't.
+    register_web: Callable[[Any], None] | None = None
 
 
 def read_prompt(package_file: str, filename: str) -> str:

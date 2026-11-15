@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Leads · JARVIS{% endblock %}
+{% block body %}
+<main class="wide">
+  <div class="row">
+    <h1>Leads</h1>
+    <span class="src-meta"><a href="/sales/profile">Sales profile</a> · {{ credits }} contact credit{{ '' if credits == 1 else 's' }} used</span>
+  </div>
+  {% if not profile %}
+  <p class="notice error">Set up your <a href="/sales/profile">sales profile</a> first: it tells JARVIS what to look for.</p>
+  {% endif %}
+
+  <form method="get" action="/leads" class="row" style="margin:12px 0 16px; justify-content:flex-start">
+    <select name="status" aria-label="Status">
+      <option value="">All statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+    <input name="min_score" type="number" min="0" max="500" placeholder="Min score" value="{{ min_score }}" style="width:7rem" aria-label="Minimum score">
+    <input name="q" type="search" placeholder="Company" value="{{ q }}" aria-label="Company name">
+    <button class="secondary" type="submit">Filter</button>
+  </form>
+
+  {% if leads %}
+  <table>
+    <thead><tr><th>Company</th><th>Score</th><th>Signal</th><th>Source</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for l in leads %}
+      {% set hot = profile and l.score >= profile.hot_score %}
+      <tr>
+        <td><a href="/leads/{{ l.id }}">{{ l.company_name }}</a>
+          <div class="src-meta">{{ l.industry or '' }}{% if l.industry and l.region %} · {% endif %}{{ l.region or '' }}</div></td>
+        <td><span class="pill {{ 'done' if hot else '' }}">{{ l.score }}{% if hot %} · hot{% endif %}</span></td>
+        <td>{{ (l.top_signal or '') | replace('_', ' ') }}</td>
+        <td>{% set link = l.source_url | safe_url %}{% if link %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">{{ l.source_url | host }}</a>{% endif %}</td>
+        <td><span class="pill {{ 'failed' if l.status == 'rejected' else ('done' if l.status in ('replied', 'meeting') else '') }}">{{ l.status }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No leads{% if status_filter or min_score or q %} match these filters{% endif %}. Ask JARVIS: "Find me some leads."</p>
+  {% endif %}
+</main>
+{% endblock %}

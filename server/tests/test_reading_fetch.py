@@ -1,9 +1,9 @@
-"""The research page fetcher: address safety, paywalls, and reading HTML. HTTP is mocked."""
+"""The shared page fetcher (jarvis.reading.fetch): address safety, paywalls, reading HTML."""
 
 import httpx
 import pytest
 
-from skills.research.fetch import FetchFailed, PageFetcher, parse_html
+from jarvis.reading.fetch import FetchFailed, PageFetcher, parse_html
 
 ARTICLE = """<!doctype html><html><head>
 <title>Fallback title</title>

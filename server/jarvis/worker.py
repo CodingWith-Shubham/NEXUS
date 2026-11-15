@@ -13,6 +13,9 @@ the audit entries and any approval it raises all belong to that user.
 
 A task with a ``kind`` other than "general" (e.g. "research") is run by the
 skill pack that registered a handler for that kind, not by the tool loop.
+
+On every poll the worker also runs the scheduler (``jarvis.scheduler``), which
+turns due ``scheduled_jobs`` into tasks.
 """
 
 import asyncio
@@ -27,6 +30,7 @@ from loguru import logger
 from jarvis.config import Config
 from jarvis.llm import ChatModel
 from jarvis.registry import ToolRegistry
+from jarvis.scheduler import Scheduler
 from jarvis.search_providers import SearchProvider
 from jarvis.skills import TaskCancelled, ToolContext
 from jarvis.store import Database, Row
@@ -60,6 +64,7 @@ class TaskWorker:
         self._timezone = timezone
         self._config = config
         self.worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:8]}"
+        self.scheduler = Scheduler(database, worker_id=self.worker_id)
 
     async def run_forever(self) -> None:
         chain = ", ".join(str(m) for m in getattr(self._llm, "chain", []))
@@ -68,6 +73,10 @@ class TaskWorker:
             f"tools: {self._registry.worker_tool_names() or 'none'})"
         )
         while True:
+            try:
+                await self.scheduler.run_due()
+            except Exception as e:
+                logger.warning(f"Could not run scheduled jobs: {e}")
             try:
                 task = await self._db.claim_next_task(self.worker_id)
             except Exception as e:

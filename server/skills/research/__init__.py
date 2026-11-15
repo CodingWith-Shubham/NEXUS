@@ -18,9 +18,9 @@ from datetime import UTC, datetime, timedelta
 from loguru import logger
 
 from jarvis.config import RESEARCH_DEPTHS, load_config
+from jarvis.reading.fetch import PageFetcher
 from jarvis.skills import SkillPack, ToolContext, read_prompt, tool
 from jarvis.store import ACTIVE_REPORT_STATUSES, ActiveReportExists, Row
-from skills.research.fetch import PageFetcher
 from skills.research.pipeline import ResearchFailed, ResearchJob
 
 TASK_KIND = "research"

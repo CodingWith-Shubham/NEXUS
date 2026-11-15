@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Sales profile · JARVIS{% endblock %}
+{% block body %}
+<style>
+  label { display: block; font-weight: 600; margin: 16px 0 4px; }
+  .hint { font-weight: 400; color: var(--muted); font-size: 13px; }
+  textarea, input[type=text], input[type=number] { width: 100%; font: inherit; padding: 8px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .two { grid-template-columns: 1fr; } }
+</style>
+<main class="wide">
+  <h1>Sales profile</h1>
+  <p class="muted">What you sell and to whom. JARVIS uses only this to find, score and write to leads.</p>
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+  {% if not has_profile %}<div class="notice error">No profile yet. Fill this in, or seed it from a file with <code>scripts/seed_sales_profile.py</code>.</div>{% endif %}
+
+  <form method="post" action="/sales/profile">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+
+    <label for="cd">Your company <span class="hint">What you sell, to whom, and why they buy.</span></label>
+    <textarea id="cd" name="company_description" rows="4">{{ form.company_description or '' }}</textarea>
+
+    <div class="two">
+      <div>
+        <label for="ti">Target industries <span class="hint">One per line.</span></label>
+        <textarea id="ti" name="target_industries" rows="5">{{ form.target_industries or '' }}</textarea>
+      </div>
+      <div>
+        <label for="rg">Regions <span class="hint">One per line.</span></label>
+        <textarea id="rg" name="regions" rows="5">{{ form.regions or '' }}</textarea>
+      </div>
+    </div>
+
+    <label for="sg">Buying signals <span class="hint">One per line: type | points | search terms (comma separated) | what counts</span></label>
+    <textarea id="sg" name="signals" rows="7" placeholder="expansion | 30 | new office, expands into | Opening an office, plant or new market in the target regions">{{ form.signals or '' }}</textarea>
+
+    <div class="two">
+      <div>
+        <label for="mn">Minimum score <span class="hint">Leads below this are discarded.</span></label>
+        <input id="mn" type="number" name="min_score" min="0" value="{{ form.min_score or '' }}">
+      </div>
+      <div>
+        <label for="hs">Hot score <span class="hint">Leads at or above this are marked hot.</span></label>
+        <input id="hs" type="number" name="hot_score" min="0" value="{{ form.hot_score or '' }}">
+      </div>
+    </div>
+
+    <label for="tt">Job titles to contact <span class="hint">One per line, most preferred first.</span></label>
+    <textarea id="tt" name="target_titles" rows="4">{{ form.target_titles or '' }}</textarea>
+
+    <div class="two">
+      <div>
+        <label for="et">Email tone</label>
+        <input id="et" type="text" name="email_tone" value="{{ form.email_tone or '' }}" placeholder="warm, concise and professional">
+      </div>
+      <div>
+        <label for="sn">Sign emails as</label>
+        <input id="sn" type="text" name="sender_name" value="{{ form.sender_name or '' }}">
+      </div>
+    </div>
+
+    <p style="margin-top:20px"><button type="submit">Save profile</button></p>
+  </form>
+  <p class="src-meta">Contact lookups: {{ credits }} credit{{ '' if credits == 1 else 's' }} used by you{% if balance is not none %}; provider balance {{ balance }} at the last lookup{% endif %}.</p>
+</main>
+{% endblock %}

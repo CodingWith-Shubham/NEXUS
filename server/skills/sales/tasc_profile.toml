@@ -1,0 +1,133 @@
+# TASC Outsourcing — Sales Profile
+
+company_description = """
+TASC Outsourcing provides recruitment, staffing and workforce solutions to
+businesses looking to hire, manage and scale their workforce. Its services
+can support organisations with talent acquisition, contract staffing and
+outsourced workforce requirements, helping them respond to business growth,
+project demands and changing workforce needs.
+
+The sales focus is on identifying organisations that may need external
+recruitment or workforce support because of expansion, large-scale hiring,
+new contracts, project mobilisation or operational growth. Prioritise
+companies with clear, recent and verifiable evidence of these needs.
+"""
+
+target_industries = [
+    "Oil and Gas",
+    "Construction and Infrastructure",
+    "Engineering",
+    "Information Technology",
+    "Banking and Financial Services",
+    "Healthcare",
+    "Retail and E-commerce",
+    "Hospitality and Tourism",
+    "Logistics and Transportation",
+    "Manufacturing",
+    "Telecommunications",
+    "Aviation",
+]
+
+regions = [
+    "Riyadh, Saudi Arabia",
+    "Jeddah, Saudi Arabia",
+    "Dammam, Saudi Arabia",
+    "Eastern Province, Saudi Arabia",
+    "NEOM and Tabuk, Saudi Arabia",
+    "Other major business hubs in Saudi Arabia",
+]
+
+target_titles = [
+    "Chief Human Resources Officer",
+    "HR Director",
+    "Human Resources Director",
+    "Head of Talent Acquisition",
+    "Talent Acquisition Director",
+    "Head of Recruitment",
+    "Recruitment Director",
+    "HR Manager",
+    "Procurement Director",
+    "Head of Procurement",
+    "Chief Operating Officer",
+    "Managing Director",
+]
+
+email_tone = "Professional, warm, concise and consultative. Personalise every email using verified company developments or hiring signals. Avoid generic sales language, exaggerated claims and aggressive calls to action. Focus on understanding workforce requirements and offering relevant TASC solutions."
+
+sender_name = "TASC Outsourcing Team"
+
+[thresholds]
+min_score = 30
+hot_score = 60
+
+[[signals]]
+type = "company_expansion"
+points = 30
+search_terms = [
+    "company expansion Saudi Arabia",
+    "new office opening",
+    "business expansion",
+    "new facility",
+    "market entry Saudi Arabia",
+]
+description = "Verified announcements of a company entering Saudi Arabia, expanding operations, opening new offices, establishing facilities or significantly increasing its operational footprint."
+
+[[signals]]
+type = "large_scale_hiring"
+points = 30
+search_terms = [
+    "mass hiring Saudi Arabia",
+    "large scale recruitment",
+    "bulk hiring",
+    "multiple job openings",
+    "career opportunities Saudi Arabia",
+]
+description = "Evidence of substantial or sustained recruitment activity, such as multiple open positions across departments, large hiring campaigns, recruitment drives or announcements of significant workforce growth. A single routine vacancy should not qualify."
+
+[[signals]]
+type = "new_contract_or_project"
+points = 30
+search_terms = [
+    "new contract awarded Saudi Arabia",
+    "major project award",
+    "government tender awarded",
+    "infrastructure project",
+    "project mobilisation Saudi Arabia",
+]
+description = "A verified announcement that the company has secured a major contract, government tender, infrastructure project or business engagement likely to require additional personnel or workforce mobilisation."
+
+[[signals]]
+type = "workforce_growth"
+points = 20
+search_terms = [
+    "workforce expansion",
+    "new employees",
+    "recruitment drive",
+    "increasing workforce",
+    "new department hiring",
+]
+description = "Reliable evidence that a company is increasing headcount, establishing new departments, scaling teams or recruiting across several functions."
+
+[[signals]]
+type = "new_market_entry"
+points = 25
+search_terms = [
+    "Saudi Arabia market entry",
+    "launching operations in KSA",
+    "new subsidiary Saudi Arabia",
+    "regional headquarters Saudi Arabia",
+    "new branch Saudi Arabia",
+]
+description = "Verified evidence that an organisation is entering the Saudi market, establishing a local entity, launching new operations or setting up a regional headquarters. Prioritise developments that could create local recruitment and workforce requirements."
+
+[[signals]]
+type = "major_business_investment"
+points = 20
+search_terms = [
+    "Saudi Arabia investment announcement",
+    "new manufacturing plant",
+    "new industrial facility",
+    "capital investment Saudi Arabia",
+    "business development project",
+]
+description = "A confirmed investment, facility development, production expansion or major operational upgrade that is likely to create additional staffing or recruitment requirements."

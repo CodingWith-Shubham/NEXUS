@@ -12,14 +12,17 @@ languages = ["en-IN", "hi-IN"]
 # its tools and prompt section; the core never imports a pack directly.
 # "demo" (Phase 1 test tools) is left out to keep the voice tool list short;
 # add it back to run evals/phase1_audio.yaml.
-enabled = ["assistant", "workspace", "research"]
+enabled = ["assistant", "workspace", "research", "sales"]
 
 [voice]
 # Gemini Live works best with a small tool set. The registry warns past this.
 # 4 core + 6 assistant + 2 workspace reads (list_events, search_email) + 4 research
-# (start_research, get_research_status, cancel_research, ask_report), plus web_search
-# while web_search = "tool". All other calendar/email tools are worker-only.
-max_tools = 17
+# (start_research, get_research_status, cancel_research, ask_report) + 6 sales
+# (find_leads, list_leads, approve_lead, reject_lead, draft_outreach, manage_lead_schedules),
+# plus web_search while web_search = "tool". Everything else is worker-only.
+# That's a lot for Gemini Live: if it starts picking the wrong tool, unload a pack you
+# aren't using, or move rare tools to worker-only.
+max_tools = 23
 # Web search for current information, with source URLs:
 #   "live" = Google Search grounding inside Gemini Live (no extra tool). Needs Google
 #            Search quota on the Gemini key (a billed project); without it Gemini Live
@@ -127,3 +130,26 @@ sub_questions = 6
 max_searches = 12
 max_pages = 20
 time_budget_secs = 720
+
+[sales]
+# Lead finding (skills/sales). The profile it works from (industries, regions, buying
+# signals and their points, thresholds, job titles, tone) is per user, on /sales/profile.
+# Limits per lead search (a scheduled sweep is one lead search):
+max_searches = 6
+max_pages = 12
+time_budget_secs = 360
+results_per_search = 5
+pages_per_query = 2
+# Signals older than this, or without a publication date, are dropped.
+max_signal_age_days = 183
+
+[contacts]
+# Who looks up contact details for approved leads: "signalhire", "lusha" (not built yet)
+# or "none". Every lookup needs the user's approval; SignalHire charges a credit per match.
+provider = "signalhire"
+# SignalHire normally delivers results to a callback URL it can reach from the internet.
+# Running on localhost it can't, so leave this empty: lookups then use SignalHire's
+# synchronous mode (immediate, from SignalHire's own data, fewer contacts found).
+# With a public URL (e.g. an ngrok https address forwarding to port 7860), set it here
+# and lookups use the full asynchronous mode with the callback.
+callback_base_url = ""

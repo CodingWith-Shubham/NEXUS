@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}{{ lead.company_name }} · Leads · JARVIS{% endblock %}
+{% block body %}
+<main class="wide">
+  <p class="src-meta"><a href="/leads">All leads</a></p>
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+
+  {% if pending %}
+  <div class="card" style="margin-bottom:16px">
+    <p><strong>Approve this?</strong><br>{{ pending.summary }}</p>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/confirm">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="next" value="/leads/{{ lead.id }}">
+      <button type="submit">Yes, go ahead</button>
+    </form>
+    <form class="inline" method="post" action="/actions/{{ pending.id }}/cancel">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <input type="hidden" name="next" value="/leads/{{ lead.id }}">
+      <button class="secondary" type="submit">Cancel</button>
+    </form>
+    <p class="src-meta" style="margin:12px 0 0">You can also tell JARVIS to confirm or cancel it.</p>
+  </div>
+  {% endif %}
+
+  <div class="row">
+    <h1>{{ lead.company_name }}</h1>
+    <span class="pill">{{ lead.status }}</span>
+  </div>
+  <p class="src-meta">Score {{ lead.score }}{% if lead.industry %} · {{ lead.industry }}{% endif %}{% if lead.region %} · {{ lead.region }}{% endif %}{% if lead.domain %} · {{ lead.domain }}{% endif %} · found {{ lead.created_at | when }}{% if lead.found_by == 'schedule' %} by a scheduled sweep{% endif %}</p>
+
+  <form method="post" action="/leads/{{ lead.id }}/status" class="row" style="justify-content:flex-start; margin:8px 0 0">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+    {% if lead.status in ('new', 'rejected') %}<button type="submit" name="status" value="approved">Approve</button>{% endif %}
+    {% if lead.status != 'rejected' %}<button class="secondary" type="submit" name="status" value="rejected">Reject</button>{% endif %}
+  </form>
+  <form method="post" action="/leads/{{ lead.id }}/status" style="margin:8px 0 0">
+    <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+    <select name="status" aria-label="Set status" onchange="this.form.submit()">
+      <option value="">Set status…</option>
+      {% for s in statuses %}{% if s != lead.status %}<option value="{{ s }}">{{ s }}</option>{% endif %}{% endfor %}
+    </select>
+  </form>
+
+  <article>
+    <h2>Evidence</h2>
+    <ul>
+    {% for e in evidence %}
+      {% set link = e.url | safe_url %}
+      <li><strong>{{ e.signal_type | replace('_', ' ') }}</strong> (+{{ e.points }}): &ldquo;{{ e.excerpt }}&rdquo;
+        <div class="src-meta">{% if link %}<a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">{{ e.title or (e.url | host) }}</a>{% else %}{{ e.title }}{% endif %}{% if e.published %} · published {{ e.published }}{% endif %} · {{ e.url | host }}</div></li>
+    {% else %}
+      <li class="muted">No evidence stored.</li>
+    {% endfor %}
+    </ul>
+
+    <h2>Contact</h2>
+    {% for c in lookups %}
+      <div style="margin-bottom:10px">
+        <span class="pill {{ 'done' if c.status == 'success' else ('failed' if c.status in ('failed', 'no_credits') else '') }}">{{ c.status | replace('_', ' ') }}</span>
+        {% if c.contact %}<strong>{{ c.contact.name }}</strong>{% if c.contact.title %}, {{ c.contact.title }}{% endif %}
+          <ul>
+            {% for e in c.contact.emails or [] %}<li>{{ e.value }}{% if e.type %} ({{ e.type }}){% endif %}</li>{% endfor %}
+            {% for p in c.contact.phones or [] %}<li>{{ p.value }}{% if p.type %} ({{ p.type | replace('_', ' ') }}){% endif %}</li>{% endfor %}
+            {% for l in c.contact.links or [] %}{% set link = l.value | safe_url %}{% if link %}<li><a href="{{ link }}" target="_blank" rel="noopener noreferrer nofollow">LinkedIn profile</a></li>{% endif %}{% endfor %}
+          </ul>
+        {% elif c.person and c.person.name %}{{ c.person.name }}{% if c.person.title %}, {{ c.person.title }}{% endif %}{% endif %}
+        {% if c.error %}<div class="src-meta">{{ c.error }}</div>{% endif %}
+        <div class="src-meta">{{ c.provider }} · {{ c.created_at | when }} · {{ c.credits_used }} credit{{ '' if c.credits_used == 1 else 's' }}</div>
+      </div>
+    {% else %}
+      <p class="muted">No contact looked up yet.</p>
+    {% endfor %}
+    {% if provider %}
+      {% if lead.status == 'approved' %}
+      <form method="post" action="/leads/{{ lead.id }}/contact">
+        <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+        <button class="secondary" type="submit">Find contact ({{ provider }}, uses 1 credit if matched)</button>
+      </form>
+      {% else %}<p class="src-meta">Approve the lead to look up a contact (it spends a credit).</p>{% endif %}
+      <p class="src-meta">{{ credits }} credit{{ '' if credits == 1 else 's' }} used by you{% if balance is not none %} · account balance {{ balance }} at last lookup{% endif %}.</p>
+    {% endif %}
+
+    <h2>Outreach</h2>
+    <form class="inline" method="post" action="/leads/{{ lead.id }}/draft">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button class="secondary" type="submit">{{ 'Draft again' if drafts else 'Draft outreach' }}</button>
+    </form>
+    {% if drafts and email %}
+    <form class="inline" method="post" action="/leads/{{ lead.id }}/send">
+      <input type="hidden" name="csrf_token" value="{{ user.csrf }}">
+      <button type="submit">Send latest email to {{ email }}</button>
+    </form>
+    {% endif %}
+    {% for d in drafts[:3] %}
+      <div class="card" style="margin-top:12px">
+        <p class="src-meta">Draft · {{ d.created_at | when }} · {{ d.detail.words }} words{% if d.detail.to %} · to {{ d.detail.to }}{% endif %}</p>
+        <p><strong>{{ d.detail.subject }}</strong></p>
+        <textarea readonly rows="7" style="width:100%" id="email-{{ d.id }}">{{ d.detail.email }}</textarea>
+        <button class="link" type="button" data-copy="email-{{ d.id }}">Copy email</button>
+        {% if d.detail.linkedin %}
+        <p class="src-meta" style="margin-top:12px">LinkedIn note (copy and send it yourself; JARVIS never sends LinkedIn messages)</p>
+        <textarea readonly rows="3" style="width:100%" id="li-{{ d.id }}">{{ d.detail.linkedin }}</textarea>
+        <button class="link" type="button" data-copy="li-{{ d.id }}">Copy LinkedIn note</button>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    <h2>History</h2>
+    <ul class="src-meta">
+    {% for a in activity %}
+      <li>{{ a.created_at | when }} · {{ a.kind | replace('_', ' ') }}
+        {% if a.kind == 'status' %}: {{ a.detail.from }} → {{ a.detail.to }}{% if a.detail.note %} ({{ a.detail.note }}){% endif %}
+        {% elif a.kind == 'email_sent' %}: to {{ a.detail.to }}, "{{ a.detail.subject }}"
+        {% elif a.kind == 'contact_lookup' %}: {{ a.detail.note }}
+        {% elif a.kind == 'found' %}: score {{ a.detail.score }}{% endif %}</li>
+    {% endfor %}
+    </ul>
+  </article>
+</main>
+<script>
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var el = document.getElementById(b.dataset.copy);
+      el.select();
+      (navigator.clipboard ? navigator.clipboard.writeText(el.value) : Promise.reject()).catch(function () { document.execCommand("copy"); });
+      b.textContent = "Copied";
+    });
+  });
+</script>
+{% endblock %}

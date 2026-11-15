@@ -8,6 +8,10 @@ one was connected are announced at the start of the next session.
 A finished research task is announced from its report (title and spoken
 summary), and the browser gets a ``research-report`` message with a link to
 ``/reports/<id>``.
+
+A task queued with ``params.announce = false`` (e.g. a scheduled sweep, whose
+results the skill pack reports at the start of the next session) is marked
+announced without being spoken.
 """
 
 import asyncio
@@ -75,6 +79,9 @@ class Announcer:
         """Announce everything pending; returns how many items were announced."""
         count = 0
         for task in await self._store.unannounced_tasks():
+            if (task.get("params") or {}).get("announce") is False:
+                await self._store.mark_task_announced(task["id"])
+                continue
             if task.get("kind") == "research":
                 await self._announce_research(task)
             else:
